@@ -169,16 +169,11 @@ public class ShoppingListItem
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private static readonly SemaphoreSlim Throttle = new(6);
 
-    // After a pull gives up, automatic pulls leave this item alone for a bit instead of retrying every frame.
-    private static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(30);
-
     [JsonIgnore] private Task? _marketDataTask;
 
     [JsonIgnore] private int _retries;
 
     [JsonIgnore] private bool _isFetchingData;
-
-    [JsonIgnore] private DateTime _lastFailedAt = DateTime.MinValue;
 
     [Newtonsoft.Json.JsonIgnore]
     public bool IsFetchingData
@@ -216,25 +211,6 @@ public class ShoppingListItem
         public List<MarketDataListing> Listings { get; set; } = new List<MarketDataListing>();
     }
 
-    /// <summary>
-    /// True when an automatic pull should happen: no data yet, data for a different region, or data older than
-    /// <paramref name="maxAge"/>. Never true while a pull is running or shortly after one failed.
-    /// </summary>
-    public bool NeedsMarketData(TimeSpan maxAge)
-    {
-        if (!IsMarketable || IsFetchingData)
-            return false;
-        lock (this)
-        {
-            if (DateTime.Now - _lastFailedAt < FailureCooldown)
-                return false;
-        }
-
-        return MarketDataFetchedAt is null
-               || MarketDataRegion != SupermarketSweep.Config.ShoppingRegion
-               || DateTime.Now - MarketDataFetchedAt > maxAge;
-    }
-
     /// <summary>Starts a pull in the background unless one is already running. Old data stays visible until it lands.</summary>
     public void RefreshMarketData() => _ = GetMarketDataResponseAsync();
 
@@ -265,7 +241,6 @@ public class ShoppingListItem
     private async Task FetchMarketDataAsync()
     {
         var region = SupermarketSweep.Config.ShoppingRegion;
-        var succeeded = false;
         while (Retries < 5)
         {
             Svc.Log.Debug($"GetMarketDataResponseAsync for item {Name}");
@@ -303,7 +278,6 @@ public class ShoppingListItem
                     MarketDataResponse = response;
                     MarketDataRegion = region;
                     MarketDataFetchedAt = DateTime.Now;
-                    succeeded = true;
                     break;
                 }
 
@@ -325,8 +299,6 @@ public class ShoppingListItem
         lock (this)
         {
             _isFetchingData = false;
-            if (!succeeded)
-                _lastFailedAt = DateTime.Now;
         }
     }
 }

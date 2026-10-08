@@ -14,6 +14,4 @@ public class Config : IEzConfig
     public bool UseVnavPathing { get; set; } = true;
     public float SearchListHeight { get; set; } = 260;
     public float ShoppingListWidth { get; set; } = 200;
-    public bool AutoPullMarketData { get; set; } = true;
-    public int MarketDataMaxAgeMinutes { get; set; } = 10;
 }

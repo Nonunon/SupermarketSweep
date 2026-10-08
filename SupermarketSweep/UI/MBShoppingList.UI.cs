@@ -198,10 +198,6 @@ public class MBShoppingList_UI : NostraWindow
         {
             DrawItemSearch(item);
 
-            if (SupermarketSweep.Config.AutoPullMarketData
-                && item.NeedsMarketData(TimeSpan.FromMinutes(SupermarketSweep.Config.MarketDataMaxAgeMinutes)))
-                item.RefreshMarketData();
-
             if (ImGuiUtil.DrawDisabledButton($"Refresh Prices##{item.ItemId}", Vector2.Zero,
                     "Pull fresh prices for this item from Universalis.", item.IsFetchingData))
                 item.RefreshMarketData();
@@ -209,6 +205,8 @@ public class MBShoppingList_UI : NostraWindow
             ImGui.SameLine();
             if (item.IsFetchingData)
                 ImGui.TextDisabled(item.Retries > 0 ? $"Fetching... (retry {item.Retries})" : "Fetching...");
+            else if (item.MarketDataRegion is { } region && region != SupermarketSweep.Config.ShoppingRegion)
+                ImGui.TextColored(ImGuiColors.DalamudOrange, $"Prices are for {region.ToFriendlyString()}, refresh for the current region");
             else if (item.MarketDataFetchedAt is { } fetchedAt)
                 ImGui.TextDisabled($"Updated {FormatAge(DateTime.Now - fetchedAt)}");
             else
@@ -233,16 +231,6 @@ public class MBShoppingList_UI : NostraWindow
         : age.TotalHours < 1 ? $"{(int)age.TotalMinutes}m ago"
         : $"{(int)age.TotalHours}h {age.Minutes}m ago";
 
-    // Opening the window pulls anything stale in the background, so prices are usually ready before you click.
-    public override void OnOpen()
-    {
-        if (!SupermarketSweep.Config.AutoPullMarketData)
-            return;
-
-        var maxAge = TimeSpan.FromMinutes(SupermarketSweep.Config.MarketDataMaxAgeMinutes);
-        foreach (var item in _manager.WantedItems.Where(i => i.NeedsMarketData(maxAge)))
-            item.RefreshMarketData();
-    }
 
     private unsafe void DrawItemSearch(ShoppingListItem item)
     {
