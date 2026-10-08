@@ -30,4 +30,8 @@ public class Config
     public bool BuyAssistEnabled { get; set; } = true;
     /// <summary>Recommend a live listing only if its unit price is at most this much over what the route planned.</summary>
     public float BuyAssistMaxOverPercent { get; set; } = 10;
+
+    // Debug
+    /// <summary>Log addon callbacks while the marketboard is open (see <see cref="AddonLogger"/>).</summary>
+    public bool LogAddonCallbacks { get; set; } = false;
 }

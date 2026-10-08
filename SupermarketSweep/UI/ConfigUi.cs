@@ -44,6 +44,10 @@ public class ConfigUi : Window
             EzConfig.Save();
         ImGuiEx.Tooltip("Listings on the board can differ from the pulled prices. Recommend one only if its price per unit\nis at most this much above what the route planned to pay.");
 
+        ImGui.Spacing();
+        var logCallbacks = SupermarketSweep.Config.LogAddonCallbacks;
+        DrawBoolConfig("Log Marketboard Callbacks (debug)", ref logCallbacks, x => SupermarketSweep.Config.LogAddonCallbacks = x, "Writes every UI callback fired while the marketboard is open to /xllog, prefixed [Supermarket Sweep][AddonLogger].\nOnly watches; nothing is clicked or changed. Leave off unless you're gathering callbacks.");
+
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")
