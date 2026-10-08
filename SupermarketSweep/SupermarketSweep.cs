@@ -41,6 +41,7 @@ public class SupermarketSweep : IDalamudPlugin
     public WindowSystem WindowSystem;
     public MainWindow MainWindow;
     public ConfigUi ConfigWindow;
+    public AboutWindow AboutWindow;
 
     public TaskManagerConfiguration LifeStreamTaskConfig;
 
@@ -73,8 +74,10 @@ public class SupermarketSweep : IDalamudPlugin
         WindowSystem = new WindowSystem();
         MainWindow = new MainWindow(this);
         ConfigWindow = new ConfigUi();
+        AboutWindow = new AboutWindow();
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(ConfigWindow);
+        WindowSystem.AddWindow(AboutWindow);
         Svc.PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenMainUi += OpenMainUi;
         Svc.PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;

@@ -1,12 +1,12 @@
 ﻿using System.Numerics;
 using ECommons.Configuration;
 using Dalamud.Bindings.ImGui;
-using NostraLib;
 using ECommons.ImGuiMethods;
+using Dalamud.Interface.Windowing;
 
 namespace SupermarketSweep.UI;
 
-public class ConfigUi : NostraWindow
+public class ConfigUi : Window
 {
     public ConfigUi() : base("Supermarket Sweep Configuration", ImGuiWindowFlags.None, false)
     {

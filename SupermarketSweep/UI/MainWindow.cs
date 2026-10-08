@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.ImGuiFileDialog;
@@ -7,7 +7,6 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using ECommons.Configuration;
 using ECommons.ImGuiMethods;
-using NostraLib;
 using SupermarketSweep.Models;
 
 namespace SupermarketSweep.UI;
@@ -15,7 +14,7 @@ namespace SupermarketSweep.UI;
 /// <summary>
 /// Layout only: toolbar, search, then shopping list | divider | tabbed details. Each area lives in its own class.
 /// </summary>
-public class MainWindow : NostraWindow
+public class MainWindow : Window
 {
     private readonly SupermarketSweep _manager;
     private readonly FileDialogManager _fileDialog = new();
@@ -43,6 +42,15 @@ public class MainWindow : NostraWindow
             Icon = FontAwesomeIcon.Cog,
             Priority = 3,
             ShowTooltip = () => ImGui.SetTooltip("Open Config Menu"),
+        });
+        TitleBarButtons.Add(new TitleBarButton
+        {
+            AvailableClickthrough = true,
+            Click = _ => manager.AboutWindow.Toggle(),
+            Icon = FontAwesomeIcon.Heart,
+            IconOffset = new Vector2(1.5f, 1),
+            Priority = 4,
+            ShowTooltip = () => ImGui.SetTooltip("With love, Nostra"),
         });
     }
 
