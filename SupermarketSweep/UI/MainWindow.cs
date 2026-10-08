@@ -22,6 +22,7 @@ public class MainWindow : NostraWindow
     private readonly SearchPanel _search;
     private readonly ShoppingListPanel _list;
     private readonly ItemPanel _itemPanel;
+    private readonly RoutePanel _routePanel;
 
     public MainWindow(SupermarketSweep manager) : base("Supermarket Sweep###SupermarketSweepMain")
     {
@@ -29,6 +30,7 @@ public class MainWindow : NostraWindow
         _search = new SearchPanel(manager);
         _list = new ShoppingListPanel(manager);
         _itemPanel = new ItemPanel(manager);
+        _routePanel = new RoutePanel(manager);
 
         Size = new Vector2(900, 650);
         SizeCondition = ImGuiCond.FirstUseEver;
@@ -130,6 +132,12 @@ public class MainWindow : NostraWindow
         {
             if (tab)
                 _itemPanel.Draw(_list.Selected);
+        }
+
+        using (var tab = ImRaii.TabItem("Route"))
+        {
+            if (tab)
+                _routePanel.Draw();
         }
     }
 }
