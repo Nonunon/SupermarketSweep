@@ -4,6 +4,8 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
 using ECommons.Configuration;
+using ECommons.DalamudServices;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using SupermarketSweep.Models;
 
 namespace SupermarketSweep.UI;
@@ -43,6 +45,21 @@ public static class UiHelpers
 
         var delta = ImGui.GetIO().MouseDelta;
         size = Math.Clamp(size + (vertical ? delta.X : delta.Y) / scale, min, max);
+        return true;
+    }
+
+    /// <summary>True when the marketboard's item search window is open, so <see cref="SearchMarketboard"/> can work.</summary>
+    public static bool IsMarketboardOpen => Svc.GameGui.GetAddonByName("ItemSearch") != nint.Zero;
+
+    /// <summary>Types <paramref name="itemName"/> into the open marketboard search and runs it. False if it's closed.</summary>
+    public static unsafe bool SearchMarketboard(string itemName)
+    {
+        var addon = (AddonItemSearch*)(nint)Svc.GameGui.GetAddonByName("ItemSearch");
+        if (addon == null)
+            return false;
+
+        addon->SearchTextInput->SetText(itemName);
+        addon->RunSearch();
         return true;
     }
 

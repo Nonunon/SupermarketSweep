@@ -209,9 +209,14 @@ public class RoutePanel(SupermarketSweep manager)
             ImGui.TableNextRow();
 
             ImGui.TableNextColumn();
-            ImGui.Text(group.Key.Name);
-            ImGuiEx.Tooltip(string.Join("\n", listings.Select(l =>
-                $"{l.Quantity} x {UiHelpers.Gil(l.PricePerUnit)}{(l.Hq ? " HQ" : "")} from {l.RetainerName}")));
+            var marketboardOpen = UiHelpers.IsMarketboardOpen;
+            if (ImGui.Selectable(group.Key.Name) && !UiHelpers.SearchMarketboard(group.Key.Name))
+                Svc.Chat.PrintError("[Supermarket Sweep] Open the marketboard first, then click the item to search it.");
+            ImGuiEx.Tooltip((marketboardOpen
+                                ? "Click to search the marketboard for this item"
+                                : "Open the marketboard, then click to search it for this item")
+                            + "\n\n" + string.Join("\n", listings.Select(l =>
+                                $"{l.Quantity} x {UiHelpers.Gil(l.PricePerUnit)}{(l.Hq ? " HQ" : "")} from {l.RetainerName}")));
 
             ImGui.TableNextColumn();
             ImGui.Text(quantity.ToString());

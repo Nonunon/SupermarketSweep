@@ -7,7 +7,6 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
-using FFXIVClientStructs.FFXIV.Client.UI;
 using SupermarketSweep.Models;
 
 namespace SupermarketSweep.UI;
@@ -92,19 +91,16 @@ public class ItemPanel(SupermarketSweep manager)
         ImGui.TextDisabled(stillNeeded == 0 ? "Got enough!" : $"Still need {stillNeeded}");
     }
 
-    private static unsafe void DrawActions(ShoppingListItem item)
+    private static void DrawActions(ShoppingListItem item)
     {
-        var addon = (AddonItemSearch*)(nint)Svc.GameGui.GetAddonByName("ItemSearch");
-        using (ImRaii.Disabled(addon == null))
+        var marketboardOpen = UiHelpers.IsMarketboardOpen;
+        using (ImRaii.Disabled(!marketboardOpen))
         {
             if (ImGui.Button("Search Marketboard"))
-            {
-                addon->SearchTextInput->SetText(item.Name);
-                addon->RunSearch();
-            }
+                UiHelpers.SearchMarketboard(item.Name);
         }
 
-        ImGuiEx.Tooltip(addon == null
+        ImGuiEx.Tooltip(!marketboardOpen
             ? "Open the marketboard first, then this searches it for this item"
             : "Search the open marketboard for this item");
 
