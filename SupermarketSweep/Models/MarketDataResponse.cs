@@ -14,7 +14,7 @@
     /// Gets or sets the name of the datacenter.
     /// </summary>
     [JsonPropertyName("dcName")]
-    public string DcName { get; set; }
+    public string DcName { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets the ID of the item.

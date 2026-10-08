@@ -13,6 +13,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using FFXIVClientStructs.FFXIV.Client.Game;
 
+// The IPC delegates below are assigned by ECommons EzIPC through reflection, so the compiler thinks they never are.
+#pragma warning disable CS0649, CS8618
 namespace SupermarketSweep.IPC
 {
     internal class IPCSubscriber_Common

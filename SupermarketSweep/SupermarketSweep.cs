@@ -22,11 +22,11 @@ namespace SupermarketSweep;
 
 public class SupermarketSweep : IDalamudPlugin
 {
-    public static List<Item> AllItems;
+    public static List<Item> AllItems = null!;
 
-    public static List<Item> MarketableItems;
-    public static ItemSearch ItemSearch;
-    public static Config Config;
+    public static List<Item> MarketableItems = null!;
+    public static ItemSearch ItemSearch = null!;
+    public static Config Config = null!;
 
     public List<ShoppingListItem> WantedItems = [];
 

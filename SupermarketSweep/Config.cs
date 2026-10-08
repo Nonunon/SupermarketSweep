@@ -5,7 +5,7 @@ using SupermarketSweep.Models;
 
 namespace SupermarketSweep;
 
-public class Config : IEzConfig
+public class Config
 {
     public bool AllCharactersInventory { get; set; } = false;
     public RegionType ShoppingRegion { get; set; } = RegionType.NorthAmerica;
