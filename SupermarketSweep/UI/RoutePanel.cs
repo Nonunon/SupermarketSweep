@@ -1,10 +1,11 @@
-using System.Text;
+﻿using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using ECommons.Configuration;
 using ECommons.DalamudServices;
+using ECommons.GameHelpers;
 using ECommons.ImGuiMethods;
 using SupermarketSweep.Models;
 
@@ -20,6 +21,7 @@ public class RoutePanel(SupermarketSweep manager)
     private RoutePlan? _plan;
     private Task<RoutePlan>? _planning;
     private string _planningFor = string.Empty;
+    private bool _planFailed;
 
     public void Draw()
     {
@@ -28,9 +30,16 @@ public class RoutePanel(SupermarketSweep manager)
         ImGui.Spacing();
 
         UpdatePlan();
+        if (_planFailed)
+        {
+            ImGui.TextColored(ImGuiColors.DalamudRed, "Route planning hit an error (details in /xllog). It retries when anything changes.");
+            ImGui.Spacing();
+        }
+
         if (_plan is null)
         {
-            ImGui.TextDisabled("Planning...");
+            if (!_planFailed)
+                ImGui.TextDisabled("Planning...");
             return;
         }
 
@@ -91,16 +100,12 @@ public class RoutePanel(SupermarketSweep manager)
     {
         if (_planning is { IsCompleted: true })
         {
-            if (_planning.IsCompletedSuccessfully)
-            {
-                _plan = _planning.Result;
-                _plannedFor = _planningFor;
-            }
-            else
-            {
+            _planFailed = !_planning.IsCompletedSuccessfully;
+            if (_planFailed)
                 Svc.Log.Error($"Route planning failed: {_planning.Exception}");
-                _plannedFor = _planningFor; // don't retry the same inputs every frame
-            }
+            else
+                _plan = _planning.Result;
+            _plannedFor = _planningFor; // either way, don't re-plan the same inputs every frame
 
             _planning = null;
         }
@@ -115,7 +120,8 @@ public class RoutePanel(SupermarketSweep manager)
         var extra = config.RouteMaxExtraPercent;
         var overbuy = config.RouteAllowOverbuy;
         _planningFor = key;
-        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy));
+        (string, string)? here = Player.Available ? (Player.CurrentWorldName, Player.CurrentDataCenterName) : null;
+        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, here));
     }
 
     private static string PlanKey(List<(ShoppingListItem Item, long StillNeeded)> wanted)

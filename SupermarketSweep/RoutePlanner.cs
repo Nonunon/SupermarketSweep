@@ -1,5 +1,4 @@
-using ECommons.ExcelServices;
-using ECommons.GameHelpers;
+﻿using ECommons.ExcelServices;
 using SupermarketSweep.Models;
 
 namespace SupermarketSweep;
@@ -62,8 +61,10 @@ public static class RoutePlanner
 
     /// <param name="wanted">Each item with how many are still needed. Computed by the caller on the framework
     /// thread, since owned counts come from Allagan Tools IPC; the planning itself is safe to run off-thread.</param>
+    /// <param name="currentWorld">Where the player is now (null if unknown), used to order the stops. Also read by the
+    /// caller on the framework thread: Dalamud only allows touching the local player there.</param>
     public static RoutePlan Plan(IReadOnlyList<(ShoppingListItem Item, long StillNeeded)> wanted,
-        float maxExtraPercent, bool allowOverbuy)
+        float maxExtraPercent, bool allowOverbuy, (string World, string DataCenter)? currentWorld = null)
     {
         var buying = wanted.Where(w => w.Item.IsMarketable && w.StillNeeded > 0).ToList();
         var needsPrices = buying.Where(w => w.Item.MarketDataResponse is null || !w.Item.PricesMatchCurrentScope)
@@ -114,7 +115,7 @@ public static class RoutePlanner
 
         return new RoutePlan
         {
-            Stops = BuildStops(current),
+            Stops = BuildStops(current, currentWorld),
             CheapestTotal = cheapest.Total,
             CheapestWorldCount = cheapest.Worlds.Count,
             Unfilled = needs.Where(n => current.Covered(n) < n.Quantity)
@@ -182,10 +183,10 @@ public static class RoutePlanner
     }
 
     // Current world first, then the rest of its data center, then other data centers; biggest spends first within each.
-    private static List<WorldStop> BuildStops(Fill fill)
+    private static List<WorldStop> BuildStops(Fill fill, (string World, string DataCenter)? here)
     {
-        var currentWorld = Player.Available ? Player.CurrentWorldName : null;
-        var currentDc = Player.Available ? Player.CurrentDataCenterName : null;
+        var currentWorld = here?.World;
+        var currentDc = here?.DataCenter;
 
         var stops = new Dictionary<string, WorldStop>();
         foreach (var (item, listings) in fill.Bought)
