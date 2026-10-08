@@ -106,8 +106,12 @@ public class MBShoppingList_UI : NostraWindow
         ImGui.Spacing();
         ImGui.Separator();
 
-        _selector.Draw(200);
-        ImGui.SameLine();
+        _selector.Draw(SupermarketSweep.Config.ShoppingListWidth * ImGuiHelpers.GlobalScale);
+        ImGui.SameLine(0, 0);
+        var width = SupermarketSweep.Config.ShoppingListWidth;
+        if (DrawSplitter("##shoppingListResize", true, ref width, 120, 800))
+            SupermarketSweep.Config.ShoppingListWidth = width;
+        ImGui.SameLine(0, 0);
         DrawWantedItem(_selector.Current);
 
         _fileDialogManager.Draw();
@@ -293,10 +297,14 @@ public class MBShoppingList_UI : NostraWindow
     {
         ImGui.Text("Item Search");
         ImGui.SameLine();
+        ImGui.SetNextItemWidth(300 * ImGuiHelpers.GlobalScale);
         ImGui.InputText("##searchBar", ref _searchTerm, 100);
         ImGuiEx.Tooltip("Words can be in any order and partial, e.g. 'courtly fending' finds\n'Courtly Lover's Gauntlets of Fending'.");
+        ImGui.SameLine();
+        if (ImGui.Button("Clear"))
+            _searchTerm = string.Empty;
 
-        ImGui.BeginChild($"ItemList", new Vector2(0, 100), true);
+        ImGui.BeginChild("ItemList", new Vector2(0, SupermarketSweep.Config.SearchListHeight * ImGuiHelpers.GlobalScale), true);
         if (!string.IsNullOrWhiteSpace(_searchTerm))
         {
             var matchingItems = SupermarketSweep.ItemSearch.Search(_searchTerm);
@@ -307,13 +315,27 @@ public class MBShoppingList_UI : NostraWindow
             foreach (var item in matchingItems.Take(MaxShownResults))
             {
                 using var id = ImRaii.PushId((int)item.RowId);
-                if (ImGui.Selectable(item.Name.ToString()))
+                var existing = _manager.WantedItems.FirstOrDefault(w => w.ItemId == item.RowId);
+                var label = existing is null ? item.Name.ToString() : $"{item.Name} (in list: {existing.Quantity})";
+
+                bool clicked;
+                using (ImRaii.PushColor(ImGuiCol.Text, ImGuiColors.HealerGreen, existing is not null))
+                    clicked = ImGui.Selectable(label);
+
+                if (clicked)
                 {
-                    var wantedItem = new ShoppingListItem(item, 1);
-                    _manager.WantedItems.Add(wantedItem);
+                    // Search stays put so several results can be added in a row; re-clicking bumps the quantity.
+                    if (existing is null)
+                    {
+                        _manager.WantedItems.Add(new ShoppingListItem(item, 1));
+                        Svc.Log.Debug($"Added shopping list item: {item.Name}");
+                    }
+                    else
+                    {
+                        existing.Quantity++;
+                    }
+
                     _manager.SaveList();
-                    Svc.Log.Debug($"Added shopping list item: {item.Name}");
-                    _searchTerm = string.Empty;
                 }
             }
 
@@ -326,6 +348,51 @@ public class MBShoppingList_UI : NostraWindow
         }
 
         ImGui.EndChild();
+        DrawSearchListResizeHandle();
+    }
+
+    // Thin bar under the result list; drag it to resize the list.
+    private void DrawSearchListResizeHandle()
+    {
+        var height = SupermarketSweep.Config.SearchListHeight;
+        if (DrawSplitter("##searchListResize", false, ref height, 80, 1000))
+            SupermarketSweep.Config.SearchListHeight = height;
+    }
+
+    /// <summary>
+    /// A draggable divider line. Horizontal bars (vertical = false) span the available width and drag up/down;
+    /// vertical bars fill the available height and drag left/right. <paramref name="size"/> is in unscaled pixels.
+    /// Saves the config once the drag ends. Returns true while the value is changing.
+    /// </summary>
+    private static bool DrawSplitter(string id, bool vertical, ref float size, float min, float max)
+    {
+        var scale = ImGuiHelpers.GlobalScale;
+        var thickness = 6 * scale;
+        var avail = ImGui.GetContentRegionAvail();
+        ImGui.InvisibleButton(id, vertical ? new Vector2(thickness, avail.Y) : new Vector2(avail.X, thickness));
+        var hovered = ImGui.IsItemHovered();
+        var active = ImGui.IsItemActive();
+
+        var rMin = ImGui.GetItemRectMin();
+        var rMax = ImGui.GetItemRectMax();
+        var color = ImGui.GetColorU32(active ? ImGuiCol.SeparatorActive : hovered ? ImGuiCol.SeparatorHovered : ImGuiCol.Separator);
+        var mid = (rMin + rMax) / 2;
+        var from = vertical ? new Vector2(mid.X, rMin.Y) : new Vector2(rMin.X, mid.Y);
+        var to = vertical ? new Vector2(mid.X, rMax.Y) : new Vector2(rMax.X, mid.Y);
+        ImGui.GetWindowDrawList().AddLine(from, to, color, 2 * scale);
+
+        if (hovered || active)
+            ImGui.SetMouseCursor(vertical ? ImGuiMouseCursor.ResizeEw : ImGuiMouseCursor.ResizeNs);
+
+        if (ImGui.IsItemDeactivated())
+            EzConfig.Save();
+
+        if (!active)
+            return false;
+
+        var delta = ImGui.GetIO().MouseDelta;
+        size = Math.Clamp(size + (vertical ? delta.X : delta.Y) / scale, min, max);
+        return true;
     }
 
     private unsafe void DrawMBButton(ShoppingListItem item)

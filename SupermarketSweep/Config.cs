@@ -13,4 +13,6 @@ public class Config : IEzConfig
     public int LifeStreamTimeout { get; set; } = 300;
     public bool RemoveQuantityAutomatically { get; set; }
     public bool UseVnavPathing { get; set; } = true;
+    public float SearchListHeight { get; set; } = 260;
+    public float ShoppingListWidth { get; set; } = 200;
 }
