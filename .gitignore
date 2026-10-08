@@ -3,3 +3,13 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
+
+# IDE state
+.vs/
+.idea/
+*.user
+*.DotSettings.user
+
+# Local-only files, not part of what ships
+CLAUDE.md
+/build/
