@@ -30,6 +30,12 @@ public class Config
     public bool BuyAssistEnabled { get; set; } = true;
     /// <summary>Recommend a live listing only if its unit price is at most this much over what the route planned.</summary>
     public float BuyAssistMaxOverPercent { get; set; } = 10;
+    /// <summary>How much the buy assistant clicks by itself.</summary>
+    public BuyAutomation BuyAutomation { get; set; } = BuyAutomation.OutlineOnly;
+    /// <summary>Pause between automated steps, in milliseconds (randomized by 30% either way).</summary>
+    public int AutoBuyStepDelayMs { get; set; } = 700;
+    /// <summary>An automated run stops before spending more than this.</summary>
+    public int AutoBuyMaxGilPerRun { get; set; } = 10_000_000;
 
     // Debug
     /// <summary>Log addon callbacks while the marketboard is open (see <see cref="AddonLogger"/>).</summary>

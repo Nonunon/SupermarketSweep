@@ -54,6 +54,7 @@ public class BuyAssistWindow : Window
         var plan = route.Plan;
         var world = Player.Available ? Player.CurrentWorldName : null;
 
+        DrawBuyerStatus();
         if (MarketboardReader.IsListingsOpen)
         {
             DrawListings(plan, world);
@@ -135,8 +136,48 @@ public class BuyAssistWindow : Window
 
         DrawCaps(caps, target);
         DrawVerdictSummary(advice, caps, stillNeeded, target);
+        DrawBuyItemButton(item, advice, plan, world);
         DrawListingTable(read.Listings, advice);
         HighlightListings(read.Listings, advice);
+    }
+
+    /// <summary>While buying: what it's doing and a Stop button. Otherwise how the last run ended.</summary>
+    private void DrawBuyerStatus()
+    {
+        var buyer = _manager.Buyer;
+        if (buyer.IsRunning)
+        {
+            using (ImRaii.PushColor(ImGuiCol.Button, ImGuiColors.DalamudRed with { W = 0.8f }))
+            {
+                if (ImGui.Button("Stop"))
+                    buyer.Stop("Stopped.", problem: false);
+            }
+
+            ImGui.SameLine();
+            ImGui.TextColored(ImGuiColors.DalamudYellow, $"{buyer.Status}...");
+            ImGui.Separator();
+        }
+        else if (buyer.LastResult is { } result)
+        {
+            ImGui.TextDisabled($"Last run: {result}");
+            ImGui.Separator();
+        }
+    }
+
+    private void DrawBuyItemButton(ShoppingListItem item, BuyAdvice advice, RoutePlan? plan, string? world)
+    {
+        var level = SupermarketSweep.Config.BuyAutomation;
+        if (level == BuyAutomation.OutlineOnly || _manager.Buyer.IsRunning || advice.BuyQuantity <= 0)
+            return;
+
+        var label = level == BuyAutomation.OpenConfirmation
+            ? $"Open the purchases ({advice.BuyQuantity} for {UiHelpers.Gil(advice.BuyCost)} gil)"
+            : $"Buy outlined ({advice.BuyQuantity} for {UiHelpers.Gil(advice.BuyCost)} gil)";
+        if (ImGui.Button(label))
+            _manager.Buyer.Start([item], plan, world);
+        ImGuiEx.Tooltip(level == BuyAutomation.OpenConfirmation
+            ? "Clicks each outlined listing so the game asks to confirm; you press Yes. Pressing No stops."
+            : "Clicks each outlined listing and presses Yes, checking the row and the confirmation text first.\nStops on anything unexpected. /shop stop also stops it.");
     }
 
     private static void DrawCaps(PriceCaps? caps, long stillNeeded)
@@ -257,7 +298,7 @@ public class BuyAssistWindow : Window
         var outlined = 0;
         foreach (var row in rows)
         {
-            var match = toFind.FindIndex(l => Shows(row, l));
+            var match = toFind.FindIndex(row.Shows);
             if (match < 0 || !Outline(row, bounds, BuyColor))
                 continue;
             toFind.RemoveAt(match);
@@ -267,21 +308,6 @@ public class BuyAssistWindow : Window
         if (toFind.Count > 0)
             ImGui.TextColored(ImGuiColors.DalamudYellow,
                 $"{toFind.Count} more to buy {(outlined > 0 ? "aren't on screen" : "not on screen")}: scroll the listings.");
-    }
-
-    /// <summary>
-    /// Whether a row on screen is this listing. The board shows price and total with or without tax depending on its
-    /// "Display price with fee included" box, so either version counts. Retainer names only count when both sides have one.
-    /// </summary>
-    private static bool Shows(ListingRow row, LiveListing listing)
-    {
-        if (row.Quantity != listing.Quantity || row.Hq != listing.Hq)
-            return false;
-        var priceOk = row.Price == listing.UnitPrice || row.Price == (long)Math.Floor(listing.UnitCost)
-                      || row.Price == (long)Math.Ceiling(listing.UnitCost);
-        var totalOk = row.Total == listing.UnitPrice * listing.Quantity || row.Total == listing.Cost;
-        var retainerOk = row.Retainer.Length == 0 || listing.Retainer.Length == 0 || row.Retainer == listing.Retainer;
-        return priceOk && totalOk && retainerOk;
     }
 
     /// <summary>Outlines search results that are items still needed from the list.</summary>
@@ -296,7 +322,7 @@ public class BuyAssistWindow : Window
     }
 
     /// <summary>This world's stop from the route, each item clickable to search the marketboard.</summary>
-    private static void DrawShoppingHere(RoutePlan? plan, string? world)
+    private void DrawShoppingHere(RoutePlan? plan, string? world)
     {
         var stop = plan?.Stops.FirstOrDefault(s => s.World == world);
         if (stop is null)
@@ -308,6 +334,16 @@ public class BuyAssistWindow : Window
         ImGui.Text($"To buy on {stop.World}:");
         ImGui.SameLine();
         ImGui.TextDisabled("(click to search)");
+        var items = stop.Purchases.Select(p => p.Item).Distinct().ToList();
+        if (SupermarketSweep.Config.BuyAutomation == BuyAutomation.BuyWorld && !_manager.Buyer.IsRunning)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"Buy everything here ({items.Count} item(s))"))
+                _manager.Buyer.Start(items, plan, world);
+            ImGuiEx.Tooltip($"Opens each item in turn and buys what the route plans here ({UiHelpers.Gil(stop.Subtotal)} gil planned).\n" +
+                            "Each buy is checked against the board; stops on anything unexpected. /shop stop also stops it.");
+        }
+
         foreach (var group in stop.Purchases.GroupBy(p => p.Item))
         {
             var quantity = group.Sum(p => p.Listing.Quantity);

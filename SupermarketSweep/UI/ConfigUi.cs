@@ -3,6 +3,9 @@ using ECommons.Configuration;
 using Dalamud.Bindings.ImGui;
 using ECommons.ImGuiMethods;
 using Dalamud.Interface.Windowing;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
+using SupermarketSweep.Models;
 
 namespace SupermarketSweep.UI;
 
@@ -44,10 +47,53 @@ public class ConfigUi : Window
             EzConfig.Save();
         ImGuiEx.Tooltip("Listings on the board can differ from the pulled prices. Recommend one only if its price per unit\nis at most this much above what the route planned to pay.");
 
+        DrawAutomationConfig();
+
         ImGui.Spacing();
         var logCallbacks = SupermarketSweep.Config.LogAddonCallbacks;
         DrawBoolConfig("Log Marketboard Callbacks (debug)", ref logCallbacks, x => SupermarketSweep.Config.LogAddonCallbacks = x, "Writes every UI callback fired while the marketboard is open to /xllog, prefixed [Supermarket Sweep][AddonLogger].\nOnly watches; nothing is clicked or changed. Leave off unless you're gathering callbacks.");
 
+    }
+
+    private static void DrawAutomationConfig()
+    {
+        var config = SupermarketSweep.Config;
+        ImGui.SetNextItemWidth(260 * ImGuiHelpers.GlobalScale);
+        using (var combo = ImRaii.Combo("Buy automation", config.BuyAutomation.ToFriendlyString()))
+        {
+            if (combo)
+            {
+                foreach (var level in Enum.GetValues<BuyAutomation>())
+                {
+                    if (ImGui.Selectable(level.ToFriendlyString(), level == config.BuyAutomation) && level != config.BuyAutomation)
+                    {
+                        config.BuyAutomation = level;
+                        EzConfig.Save();
+                    }
+
+                    ImGuiEx.Tooltip(level.Description());
+                }
+            }
+        }
+
+        ImGuiEx.Tooltip(config.BuyAutomation.Description() + "\nEvery buy is checked: the row on screen, the confirmation's item and price, your gil and the limit below.");
+
+        using var disabled = ImRaii.Disabled(config.BuyAutomation == BuyAutomation.OutlineOnly);
+        var delay = config.AutoBuyStepDelayMs;
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        if (ImGui.SliderInt("Step delay", ref delay, 300, 3000, "%d ms"))
+            config.AutoBuyStepDelayMs = delay;
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("Pause between automated clicks, give or take 30%.");
+
+        var limit = config.AutoBuyMaxGilPerRun;
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputInt("Max gil per run", ref limit, 100_000, 1_000_000))
+            config.AutoBuyMaxGilPerRun = Math.Max(0, limit);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("An automated run stops before it would spend more than this in total.");
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")

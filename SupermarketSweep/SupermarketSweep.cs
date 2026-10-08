@@ -44,6 +44,7 @@ public class SupermarketSweep : IDalamudPlugin
     public AboutWindow AboutWindow;
     public BuyAssistWindow BuyAssistWindow;
     private readonly AddonLogger _addonLogger;
+    public MarketboardBuyer Buyer;
 
     public TaskManagerConfiguration LifeStreamTaskConfig;
 
@@ -65,6 +66,7 @@ public class SupermarketSweep : IDalamudPlugin
         TaskManager = new TaskManager(DefaultTaskConfig);
         LoadList();
         _addonLogger = new AddonLogger();
+        Buyer = new MarketboardBuyer();
         _OnItemAdded =
             Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>(
                 "AllaganTools.ItemAdded");
@@ -88,9 +90,18 @@ public class SupermarketSweep : IDalamudPlugin
         Svc.PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
     }
 
-    [Cmd("/shop", "Opens the shopping list UI.")]
+    [Cmd("/shop", "Opens the shopping list UI. \"/shop stop\" stops automated buying.")]
     public void OnCommand(string command, string args)
     {
+        if (args.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Buyer.IsRunning)
+                Buyer.Stop("Stopped with /shop stop.", problem: false);
+            else
+                Svc.Chat.Print("[Supermarket Sweep] Not buying anything right now.");
+            return;
+        }
+
         OpenMainUi();
     }
 
@@ -275,6 +286,7 @@ public class SupermarketSweep : IDalamudPlugin
     {
         _OnItemAdded?.Unsubscribe(OnItemAdded);
         _addonLogger.Dispose();
+        Buyer.Dispose();
         Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
         Svc.PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
