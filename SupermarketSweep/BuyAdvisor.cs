@@ -110,50 +110,96 @@ public static class BuyAdvisor
                 index[AsMarketListing(listing)] = i;
         }
 
+        // Two candidates: the route's own picks first (it weighed every item and world, and a plain re-fill can undo
+        // that, e.g. a cheap extra HQ crowding out a planned NQ stack), and a plain cheapest fill (Universalis is
+        // crowdsourced, so the board can have cheaper listings the route never saw). Keep the better one.
+        var acceptable = index.Keys.ToList();
+        var routeFirst = Select(acceptable, plannedHere, quality, stillNeeded, allowOverbuy);
+        var cheapest = Select(acceptable, [], quality, stillNeeded, allowOverbuy);
+        // Units left short have to be bought elsewhere; value them at the most we'd pay per unit here.
+        var shortPenalty = Math.Max(caps?.Hq ?? 0, caps?.Nq ?? 0);
+        var chosen = Better(cheapest, routeFirst, stillNeeded, quality, shortPenalty);
+
+        // Mark which picks are exactly what the route planned, for the "route's pick" label.
         var fromRoute = new bool[live.Count];
-        var pool = index.Keys.ToList();
-        long quantity = 0, cost = 0;
-        void Take(MarketDataListing taken, bool planned)
+        var unmatched = plannedHere.ToList();
+        foreach (var taken in chosen)
         {
-            pool.Remove(taken);
             verdicts[index[taken]] = ListingVerdict.Buy;
-            fromRoute[index[taken]] = planned;
-            quantity += taken.Quantity;
-            cost += taken.Cost;
-        }
-
-        // The route's own picks first, where they're still on the board as pulled: it chose them weighing every item
-        // and world, and a greedy re-fill here can undo that (a cheap extra HQ crowding out a planned NQ stack).
-        foreach (var planned in plannedHere)
-        {
-            if (quantity >= stillNeeded || (!allowOverbuy && planned.Quantity > stillNeeded - quantity))
+            var planned = unmatched.FindIndex(p => SameListing(p, taken));
+            if (planned < 0)
                 continue;
-            var match = pool.FirstOrDefault(l => l.PricePerUnit == planned.PricePerUnit && l.Quantity == planned.Quantity
-                                                 && l.Hq == planned.Hq);
-            if (match is not null)
-                Take(match, true);
+            fromRoute[index[taken]] = true;
+            unmatched.RemoveAt(planned);
         }
 
-        // Then whatever is still needed, tier by tier like the planner. Without overbuy, an exact fill: the planner's
-        // greedy pass can take a cheap small stack that leaves a bigger one no longer fitting, and here (one item,
-        // one world) the exact answer is cheap enough.
+        var quantity = chosen.Sum(l => l.Quantity);
+        return new BuyAdvice(verdicts, fromRoute, quantity, chosen.Sum(l => l.Cost), Math.Max(0, stillNeeded - quantity));
+    }
+
+    private static bool SameListing(MarketDataListing a, MarketDataListing b) =>
+        a.PricePerUnit == b.PricePerUnit && a.Quantity == b.Quantity && a.Hq == b.Hq;
+
+    /// <summary>
+    /// Fills <paramref name="need"/> from <paramref name="acceptable"/>: the <paramref name="planned"/> listings first
+    /// where they're on the board, then the rest tier by tier like the planner. Without overbuy that's an exact fill:
+    /// the planner's greedy pass can take a cheap small stack that leaves a bigger one no longer fitting, and here
+    /// (one item, one world) the exact answer is cheap enough.
+    /// </summary>
+    private static List<MarketDataListing> Select(List<MarketDataListing> acceptable,
+        IReadOnlyList<MarketDataListing> planned, QualityPreference quality, long need, bool allowOverbuy)
+    {
+        var pool = acceptable.ToList();
+        var taken = new List<MarketDataListing>();
+        long quantity = 0;
+        foreach (var plannedListing in planned)
+        {
+            if (quantity >= need || (!allowOverbuy && plannedListing.Quantity > need - quantity))
+                continue;
+            var match = pool.FirstOrDefault(l => SameListing(l, plannedListing));
+            if (match is null)
+                continue;
+            pool.Remove(match);
+            taken.Add(match);
+            quantity += match.Quantity;
+        }
+
         var sorted = pool.OrderBy(l => (double)l.Cost / l.Quantity).ToList();
         List<List<MarketDataListing>> tiers = quality == QualityPreference.PreferHq
             ? [sorted.Where(l => l.Hq).ToList(), sorted.Where(l => !l.Hq).ToList()]
             : [sorted];
         foreach (var tier in tiers)
         {
-            var remaining = stillNeeded - quantity;
+            var remaining = need - quantity;
             if (remaining <= 0)
                 break;
             var picks = allowOverbuy || remaining > MaxExactFill
                 ? RoutePlanner.FillFromTier(tier, remaining, null, allowOverbuy)
                 : FillExact(tier, (int)remaining);
-            foreach (var taken in picks)
-                Take(taken, false);
+            taken.AddRange(picks);
+            quantity += picks.Sum(l => l.Quantity);
         }
 
-        return new BuyAdvice(verdicts, fromRoute, quantity, cost, Math.Max(0, stillNeeded - quantity));
+        return taken;
+    }
+
+    /// <summary>
+    /// The cheaper of two selections once each unit left short is charged at <paramref name="shortPenalty"/> (it has
+    /// to be bought elsewhere). On a tie, more HQ wins for items with an HQ rule, then <paramref name="a"/>.
+    /// </summary>
+    private static List<MarketDataListing> Better(List<MarketDataListing> a, List<MarketDataListing> b, long need,
+        QualityPreference quality, double shortPenalty)
+    {
+        double Score(List<MarketDataListing> picks) =>
+            picks.Sum(l => l.Cost) + Math.Max(0, need - picks.Sum(l => l.Quantity)) * shortPenalty;
+        long Hq(List<MarketDataListing> picks) => picks.Where(l => l.Hq).Sum(l => l.Quantity);
+
+        var (aScore, bScore) = (Score(a), Score(b));
+        if (Math.Abs(aScore - bScore) > 1e-6)
+            return aScore < bScore ? a : b;
+        if (quality != QualityPreference.Any && Hq(a) != Hq(b))
+            return Hq(a) > Hq(b) ? a : b;
+        return a;
     }
 
     /// <summary>Above this many still needed, fall back to the greedy fill (the exact one's table grows with it).</summary>
