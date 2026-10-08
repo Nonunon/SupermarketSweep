@@ -189,7 +189,10 @@ public class MBShoppingList_UI : NostraWindow
 
         ImGui.Text($"Already Owned: {item.InventoryCount}");
         ImGuiEx.Tooltip(
-            "Amount of this item you have across all characters (including retainers and alts)\nSourced from Allagan Tools\nSee Allagan Tools for detailed information");
+            (SupermarketSweep.Config.AllCharactersInventory
+                ? "Amount of this item you have across all characters (including retainers and alts)"
+                : "Amount of this item this character has (including its retainers)")
+            + "\nSourced from Allagan Tools\nSee Allagan Tools for detailed information");
 
         if (item.IsMarketable)
         {

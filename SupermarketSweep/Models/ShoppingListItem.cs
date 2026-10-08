@@ -67,7 +67,8 @@ public class ShoppingListItem
                 {
                     _inventoryCount = AllaganTools_IPCSubscriber.IsInitialized()
                         ? AllaganTools_IPCSubscriber.ItemCountOwned(ItemId,
-                            SupermarketSweep.Config.AllCharactersInventory,
+                            // Allagan Tools' flag is "current character only", the opposite of our setting.
+                            !SupermarketSweep.Config.AllCharactersInventory,
                             ValidInventoryTypes.Select(i => (uint)i).ToArray())
                         : 0;
                     _inventoryLastUpdated = DateTime.Now;
