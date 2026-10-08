@@ -258,10 +258,9 @@ public class BuyAssistWindow : Window
         foreach (var row in rows)
         {
             var match = toFind.FindIndex(l => Shows(row, l));
-            if (match < 0)
+            if (match < 0 || !Outline(row, bounds, BuyColor))
                 continue;
             toFind.RemoveAt(match);
-            Outline(row, bounds, BuyColor);
             outlined++;
         }
 
@@ -320,16 +319,25 @@ public class BuyAssistWindow : Window
         }
     }
 
-    private static void Outline(ScreenRow row, ScreenRow? clip, Vector4 color)
+    /// <summary>
+    /// Outlines a game row on ImGui's foreground layer (the background layer didn't show in-game). Rows whose middle
+    /// lies outside the list (scrolled half out) are skipped rather than clipped, since the list's own size may read 0.
+    /// Returns false if the row was skipped.
+    /// </summary>
+    private static bool Outline(ScreenRow row, ScreenRow? list, Vector4 color)
     {
-        var offset = ImGuiHelpers.MainViewport.Pos;
-        var drawList = ImGui.GetBackgroundDrawList(ImGuiHelpers.MainViewport);
-        if (clip is not null)
-            drawList.PushClipRect(clip.Min + offset, clip.Max + offset, false);
-        drawList.AddRectFilled(row.Min + offset, row.Max + offset, ImGui.GetColorU32(color with { W = 0.15f }), 4);
-        drawList.AddRect(row.Min + offset, row.Max + offset, ImGui.GetColorU32(color), 4, ImDrawFlags.None,
-            2 * ImGuiHelpers.GlobalScale);
-        if (clip is not null)
-            drawList.PopClipRect();
+        var middle = (row.Min + row.Max) / 2;
+        if (list is not null && list.Max.X > list.Min.X && list.Max.Y > list.Min.Y
+            && (middle.Y < list.Min.Y || middle.Y > list.Max.Y))
+            return false;
+
+        // Inset a little so outlines on neighbouring rows don't merge into one thick line.
+        var inset = new Vector2(2, 1.5f) * ImGuiHelpers.GlobalScale;
+        var min = row.Min + ImGuiHelpers.MainViewport.Pos + inset;
+        var max = row.Max + ImGuiHelpers.MainViewport.Pos - inset;
+        var drawList = ImGui.GetForegroundDrawList(ImGuiHelpers.MainViewport);
+        drawList.AddRectFilled(min, max, ImGui.GetColorU32(color with { W = 0.15f }), 4);
+        drawList.AddRect(min, max, ImGui.GetColorU32(color), 4, ImDrawFlags.None, 2 * ImGuiHelpers.GlobalScale);
+        return true;
     }
 }
