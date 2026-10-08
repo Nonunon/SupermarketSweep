@@ -2,7 +2,7 @@
 using ECommons.Configuration;
 using Dalamud.Bindings.ImGui;
 using NostraLib;
-using OtterGui;
+using ECommons.ImGuiMethods;
 
 namespace SupermarketSweep.UI;
 
@@ -31,7 +31,7 @@ public class ConfigUi : NostraWindow
             SupermarketSweep.Config.LifeStreamTimeout = lifeStreamTimeout;
             EzConfig.Save();
         }
-        ImGuiUtil.HoverTooltip("The amount of time in seconds before considering Lifestream to be stuck.");
+        ImGuiEx.Tooltip("The amount of time in seconds before considering Lifestream to be stuck.");
 
     }
 
@@ -42,6 +42,6 @@ public class ConfigUi : NostraWindow
             setter(value);
             EzConfig.Save();
         }
-        ImGuiUtil.HoverTooltip(tooltip);
+        ImGuiEx.Tooltip(tooltip);
     }
 }

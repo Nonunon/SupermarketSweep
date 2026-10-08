@@ -119,4 +119,8 @@ public class MarketDataListing
     /// </summary>
     [JsonPropertyName("worldName")]
     public string WorldName { get; set; }
+
+    /// <summary>What you actually pay for the whole listing: <see cref="Total"/> plus sales tax.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public long Cost => Total + Tax;
 }

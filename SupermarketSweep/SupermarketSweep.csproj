@@ -10,7 +10,6 @@
     <ItemGroup>
       <ProjectReference Include="..\ECommons\ECommons\ECommons.csproj" />
       <ProjectReference Include="..\NostraLib\NostraLib\NostraLib.csproj" />
-      <ProjectReference Include="..\OtterGui\OtterGui.csproj" />
     </ItemGroup>
 
     <ItemGroup>

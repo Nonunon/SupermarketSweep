@@ -39,8 +39,8 @@ public class SupermarketSweep : IDalamudPlugin
 #endif
     
     public WindowSystem WindowSystem;
-    public MBShoppingList_UI MBShoppingListUI;
-    public ConfigUi MBShoppingListConfigUI;
+    public MainWindow MainWindow;
+    public ConfigUi ConfigWindow;
 
     public TaskManagerConfiguration LifeStreamTaskConfig;
 
@@ -71,10 +71,10 @@ public class SupermarketSweep : IDalamudPlugin
         _OnItemAdded.Subscribe(OnItemAdded);
 
         WindowSystem = new WindowSystem();
-        MBShoppingListUI = new MBShoppingList_UI(this);
-        MBShoppingListConfigUI = new ConfigUi();
-        WindowSystem.AddWindow(MBShoppingListUI);
-        WindowSystem.AddWindow(MBShoppingListConfigUI);
+        MainWindow = new MainWindow(this);
+        ConfigWindow = new ConfigUi();
+        WindowSystem.AddWindow(MainWindow);
+        WindowSystem.AddWindow(ConfigWindow);
         Svc.PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenMainUi += OpenMainUi;
         Svc.PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
@@ -88,12 +88,12 @@ public class SupermarketSweep : IDalamudPlugin
 
     public void OpenConfigUi()
     {
-        MBShoppingListConfigUI.Toggle();
+        ConfigWindow.Toggle();
     }
 
     public void OpenMainUi()
     {
-        MBShoppingListUI.Toggle();
+        MainWindow.Toggle();
     }
 
     private static ICallGateSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>? _OnItemAdded;
@@ -113,6 +113,46 @@ public class SupermarketSweep : IDalamudPlugin
         SaveList();
     }
 
+
+    /// <summary>Adds an item to the list, or adds to its quantity if it's already there.</summary>
+    public ShoppingListItem AddItem(Item item, long quantity, bool save = true)
+    {
+        var existing = WantedItems.FirstOrDefault(i => i.ItemId == item.RowId);
+        if (existing is null)
+        {
+            existing = new ShoppingListItem(item, (int)quantity);
+            WantedItems.Add(existing);
+        }
+        else
+        {
+            existing.Quantity += quantity;
+        }
+
+        if (save)
+            SaveList();
+        return existing;
+    }
+
+    public void RemoveItem(ShoppingListItem item)
+    {
+        WantedItems.Remove(item);
+        SaveList();
+    }
+
+    /// <summary>World travel through Lifestream, then (optionally) walk to the marketboard.</summary>
+    public void TravelToWorld(string worldName)
+    {
+        if (!Lifestream_IPCSubscriber.IsEnabled)
+        {
+            Svc.Chat.PrintError("[Supermarket Sweep] Lifestream is required to move between servers");
+            return;
+        }
+
+        TaskManager.Enqueue(() => Lifestream_IPCSubscriber.ExecuteCommand(worldName), LifeStreamTaskConfig);
+        TaskManager.Enqueue(() => !Lifestream_IPCSubscriber.IsBusy(), LifeStreamTaskConfig);
+        TaskManager.Enqueue(GenericHelpers.IsScreenReady);
+        TaskManager.Enqueue(QueueMoveToMarketboardTasks);
+    }
 
     public void SaveList()
     {
