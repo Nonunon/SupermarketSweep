@@ -25,6 +25,7 @@ public class SupermarketSweep : IDalamudPlugin
     public static List<Item> AllItems;
 
     public static List<Item> MarketableItems;
+    public static ItemSearch ItemSearch;
     public static Config Config;
 
     public List<ShoppingListItem> WantedItems = [];
@@ -51,6 +52,7 @@ public class SupermarketSweep : IDalamudPlugin
         Config = EzConfig.Init<Config>();
         AllItems = Svc.Data.GameData.GetExcelSheet<Item>()!.ToList();
         MarketableItems = AllItems.Where(i => i.ItemSearchCategory.RowId != 0).ToList();
+        ItemSearch = new ItemSearch(AllItems);
 
         LifeStreamTaskConfig = new TaskManagerConfiguration(
             timeLimitMS: Config.LifeStreamTimeout * 1000, showDebug: showDebug);

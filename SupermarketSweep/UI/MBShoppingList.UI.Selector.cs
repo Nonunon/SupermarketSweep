@@ -33,8 +33,7 @@ public class MbShoppingListUiSelector : ItemSelector<ShoppingListItem>
     }
 
     protected override bool Filtered(int idx) => Filter.Length != 0 &&
-                                                 !Items[idx].Name.Contains(Filter,
-                                                     StringComparison.InvariantCultureIgnoreCase);
+                                                 !ItemSearch.Matches(Items[idx].Name, Filter);
 
     protected override bool OnDelete(int idx)
     {

@@ -286,32 +286,39 @@ public class MBShoppingList_UI : NostraWindow
 
     private string _searchTerm = string.Empty;
 
+    // Drawing tens of thousands of Selectables for a one-letter query tanks the frame rate.
+    private const int MaxShownResults = 200;
+
     private void DrawItemAdd()
     {
         ImGui.Text("Item Search");
         ImGui.SameLine();
         ImGui.InputText("##searchBar", ref _searchTerm, 100);
+        ImGuiEx.Tooltip("Words can be in any order and partial, e.g. 'courtly fending' finds\n'Courtly Lover's Gauntlets of Fending'.");
 
         ImGui.BeginChild($"ItemList", new Vector2(0, 100), true);
-        if (!string.IsNullOrEmpty(_searchTerm))
+        if (!string.IsNullOrWhiteSpace(_searchTerm))
         {
-            var matchingItems = SupermarketSweep.AllItems.Where(item =>
-                item.Name.ToString().Contains(_searchTerm, StringComparison.OrdinalIgnoreCase));
+            var matchingItems = SupermarketSweep.ItemSearch.Search(_searchTerm);
 
-            if (matchingItems.Any())
+            if (matchingItems.Count == 0)
+                ImGui.TextDisabled("No items found.");
+
+            foreach (var item in matchingItems.Take(MaxShownResults))
             {
-                foreach (var item in matchingItems)
+                using var id = ImRaii.PushId((int)item.RowId);
+                if (ImGui.Selectable(item.Name.ToString()))
                 {
-                    if (ImGui.Selectable(item.Name.ToString()))
-                    {
-                        var wantedItem = new ShoppingListItem(item, 1);
-                        _manager.WantedItems.Add(wantedItem);
-                        _manager.SaveList();
-                        Svc.Log.Debug($"Added shopping list item: {item.Name}");
-                        _searchTerm = string.Empty;
-                    }
+                    var wantedItem = new ShoppingListItem(item, 1);
+                    _manager.WantedItems.Add(wantedItem);
+                    _manager.SaveList();
+                    Svc.Log.Debug($"Added shopping list item: {item.Name}");
+                    _searchTerm = string.Empty;
                 }
             }
+
+            if (matchingItems.Count > MaxShownResults)
+                ImGui.TextDisabled($"...and {matchingItems.Count - MaxShownResults} more. Add more words to narrow it down.");
         }
         else
         {
