@@ -53,6 +53,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         public long Extra => Math.Max(0, Bought - Target);
         public DateTime? SearchedAt { get; set; }
         public bool ForceReopen { get; set; }
+        public DateTime? ClosingSince { get; set; }
         public int ScrollTries { get; set; }
         public int Failures { get; set; }
     }
@@ -215,6 +216,25 @@ public sealed unsafe class MarketboardBuyer : IDisposable
             return;
         }
 
+        // The game ignores a search-result click while another item's listings are open (seen in-game), so close
+        // that window first (its X sends [-1]) and wait for it to go.
+        var listings = MarketboardReader.GetReadyAddon("ItemSearchResult");
+        if (listings != null || Svc.GameGui.GetAddonByName("ItemSearchResult") != nint.Zero)
+        {
+            run.ClosingSince ??= now;
+            if (now - run.ClosingSince > TimeSpan.FromSeconds(5))
+            {
+                Stop("Couldn't close the previous item's listings.");
+                return;
+            }
+
+            if (listings != null)
+                Callback.Fire(listings, true, -1);
+            Delay(0.5);
+            return;
+        }
+
+        run.ClosingSince = null;
         var search = MarketboardReader.GetReadyAddon("ItemSearch");
         if (search == null)
         {
