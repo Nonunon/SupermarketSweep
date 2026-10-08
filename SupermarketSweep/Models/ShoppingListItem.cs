@@ -50,6 +50,17 @@ public class ShoppingListItem
     public bool IsMarketable { get; private set; }
     public long Quantity { get; set; }
 
+    /// <summary>Per-item HQ rule for the route planner; <see cref="QualityPreference.Default"/> follows the route setting.</summary>
+    public QualityPreference Quality { get; set; } = QualityPreference.Default;
+
+    [Newtonsoft.Json.JsonIgnore] public bool CanBeHq => _itemRecord?.CanBeHq ?? false;
+
+    /// <summary>The rule the planner actually uses: the item's own, else the route default; Any if it can't be HQ.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public QualityPreference EffectiveQuality => !CanBeHq ? QualityPreference.Any
+        : Quality != QualityPreference.Default ? Quality
+        : SupermarketSweep.Config.RouteDefaultQuality;
+
     [Newtonsoft.Json.JsonIgnore]
     private DateTime _inventoryLastUpdated = DateTime.MinValue;
 

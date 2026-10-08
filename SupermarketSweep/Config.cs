@@ -22,4 +22,6 @@ public class Config
     public bool RouteAllowOverbuy { get; set; } = false;
     /// <summary>When shopping North America, also pull Oceania (Materia) prices so the route can go there.</summary>
     public bool RouteIncludeOceania { get; set; } = false;
+    /// <summary>HQ rule for items that don't set their own.</summary>
+    public QualityPreference RouteDefaultQuality { get; set; } = QualityPreference.PreferHq;
 }

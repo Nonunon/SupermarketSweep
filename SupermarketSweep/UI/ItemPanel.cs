@@ -89,6 +89,20 @@ public class ItemPanel(SupermarketSweep manager)
         ImGui.SameLine(0, 20 * ImGuiHelpers.GlobalScale);
         var stillNeeded = Math.Max(0, item.Quantity - owned);
         ImGui.TextDisabled(stillNeeded == 0 ? "Got enough!" : $"Still need {stillNeeded}");
+
+        if (!item.CanBeHq)
+            return;
+
+        ImGui.SameLine(0, 20 * ImGuiHelpers.GlobalScale);
+        var quality = item.Quality;
+        var defaultLabel = $"Default ({SupermarketSweep.Config.RouteDefaultQuality.ToFriendlyString()})";
+        if (UiHelpers.QualityCombo("##quality", ref quality, true, 150, defaultLabel))
+        {
+            item.Quality = quality;
+            manager.SaveList();
+        }
+
+        ImGuiEx.Tooltip("Which quality the Route tab buys for this item.\nDefault follows the Route tab's setting.");
     }
 
     private static void DrawActions(ShoppingListItem item)

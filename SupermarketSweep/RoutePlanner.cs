@@ -44,16 +44,27 @@ public class RoutePlan
 ///
 /// Without overbuy, stacks bigger than what's still needed are skipped, so an item can end up partly covered.
 /// With overbuy, the cheapest single stack that finishes the item may be bought even if it's more than needed.
-/// HQ and NQ are treated the same.
+///
+/// HQ follows each item's <see cref="ShoppingListItem.EffectiveQuality"/>: listings are split into tiers (HQ, then NQ
+/// for Prefer HQ; HQ alone for HQ only; one mixed tier for Any) and filled tier by tier. Dropping a world must not
+/// lower how much HQ an item gets, so "fewer trips" never quietly swaps HQ for NQ.
 /// </summary>
 public static class RoutePlanner
 {
-    private record Need(ShoppingListItem Item, long Quantity, List<MarketDataListing> ByUnitPrice);
+    /// <param name="Tiers">Listing groups to buy from in order, each sorted by price per unit.</param>
+    private record Need(ShoppingListItem Item, long Quantity, List<List<MarketDataListing>> Tiers)
+    {
+        public IEnumerable<MarketDataListing> AllListings => Tiers.SelectMany(t => t);
+    }
 
     private record Fill(Dictionary<ShoppingListItem, List<MarketDataListing>> Bought, long Total)
     {
         public long Covered(Need need) => Bought.TryGetValue(need.Item, out var listings)
             ? Math.Min(need.Quantity, listings.Sum(l => l.Quantity))
+            : 0;
+
+        public long HqCovered(Need need) => Bought.TryGetValue(need.Item, out var listings)
+            ? Math.Min(need.Quantity, listings.Where(l => l.Hq).Sum(l => l.Quantity))
             : 0;
 
         public HashSet<string> Worlds => Bought.Values.SelectMany(l => l).Select(l => l.WorldName).ToHashSet();
@@ -70,10 +81,7 @@ public static class RoutePlanner
         var needsPrices = buying.Where(w => w.Item.MarketDataResponse is null || !w.Item.PricesMatchCurrentScope)
             .Select(w => w.Item).ToList();
         var needs = buying.Where(w => !needsPrices.Contains(w.Item))
-            .Select(w => new Need(w.Item, w.StillNeeded, w.Item.MarketDataResponse!.Listings
-                .Where(l => l.Quantity > 0 && !string.IsNullOrEmpty(l.WorldName))
-                .OrderBy(l => (double)l.Cost / l.Quantity)
-                .ToList()))
+            .Select(w => new Need(w.Item, w.StillNeeded, BuildTiers(w.Item)))
             .ToList();
 
         var cheapest = FillAll(needs, null, allowOverbuy);
@@ -82,7 +90,7 @@ public static class RoutePlanner
         // Ban one used world per round; its purchases can move to ANY world still allowed, including ones the
         // cheapest plan never touched. Keep the ban if it doesn't add worlds, covers as much, and fits the budget.
         // The allowed set only shrinks, so this always ends.
-        var allowedWorlds = needs.SelectMany(n => n.ByUnitPrice).Select(l => l.WorldName).ToHashSet();
+        var allowedWorlds = needs.SelectMany(n => n.AllListings).Select(l => l.WorldName).ToHashSet();
         var current = cheapest;
         var bestSeen = cheapest;
         while (true)
@@ -94,7 +102,8 @@ public static class RoutePlanner
                 var trial = FillAll(needs, allowed, allowOverbuy);
                 if (trial.Total > budget
                     || trial.Worlds.Count > current.Worlds.Count
-                    || needs.Any(n => trial.Covered(n) < cheapest.Covered(n)))
+                    || needs.Any(n => trial.Covered(n) < cheapest.Covered(n)
+                                      || trial.HqCovered(n) < cheapest.HqCovered(n)))
                     continue;
                 if (best is null
                     || trial.Worlds.Count < best.Value.Fill.Worlds.Count
@@ -141,13 +150,45 @@ public static class RoutePlanner
         return new Fill(bought, total);
     }
 
+    private static List<List<MarketDataListing>> BuildTiers(ShoppingListItem item)
+    {
+        var usable = item.MarketDataResponse!.Listings
+            .Where(l => l.Quantity > 0 && !string.IsNullOrEmpty(l.WorldName))
+            .OrderBy(l => (double)l.Cost / l.Quantity)
+            .ToList();
+        return item.EffectiveQuality switch
+        {
+            QualityPreference.HqOnly => [usable.Where(l => l.Hq).ToList()],
+            QualityPreference.PreferHq => [usable.Where(l => l.Hq).ToList(), usable.Where(l => !l.Hq).ToList()],
+            _ => [usable],
+        };
+    }
+
+    // Fills from the first tier, then whatever's left from the next, and so on.
     private static List<MarketDataListing> FillOne(Need need, HashSet<string>? allowedWorlds, bool allowOverbuy)
     {
         var taken = new List<MarketDataListing>();
         var remaining = need.Quantity;
+        foreach (var tier in need.Tiers)
+        {
+            if (remaining <= 0)
+                break;
+            var fromTier = FillFromTier(tier, remaining, allowedWorlds, allowOverbuy);
+            taken.AddRange(fromTier);
+            remaining -= fromTier.Sum(l => l.Quantity);
+        }
+
+        return taken;
+    }
+
+    private static List<MarketDataListing> FillFromTier(List<MarketDataListing> byUnitPrice, long quantity,
+        HashSet<string>? allowedWorlds, bool allowOverbuy)
+    {
+        var taken = new List<MarketDataListing>();
+        var remaining = quantity;
         MarketDataListing? finisher = null;
 
-        foreach (var listing in need.ByUnitPrice)
+        foreach (var listing in byUnitPrice)
         {
             if (remaining <= 0)
                 break;
@@ -173,10 +214,10 @@ public static class RoutePlanner
             return taken;
 
         // A single stack covering the whole need can beat a pile of small ones plus a finisher.
-        var oneStack = need.ByUnitPrice
-            .Where(l => l.Quantity >= need.Quantity && (allowedWorlds is null || allowedWorlds.Contains(l.WorldName)))
+        var oneStack = byUnitPrice
+            .Where(l => l.Quantity >= quantity && (allowedWorlds is null || allowedWorlds.Contains(l.WorldName)))
             .MinBy(l => l.Cost);
-        var takenCovers = taken.Sum(l => l.Quantity) >= need.Quantity;
+        var takenCovers = taken.Sum(l => l.Quantity) >= quantity;
         if (oneStack is not null && (!takenCovers || oneStack.Cost < taken.Sum(l => l.Cost)))
             return [oneStack];
         return taken;

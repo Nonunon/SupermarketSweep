@@ -3,6 +3,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
 using ECommons.Configuration;
 using ECommons.DalamudServices;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -61,6 +62,31 @@ public static class UiHelpers
         addon->SearchTextInput->SetText(itemName);
         addon->RunSearch();
         return true;
+    }
+
+    /// <summary>Dropdown for an HQ rule. Returns true when the user picked something new.</summary>
+    public static bool QualityCombo(string id, ref QualityPreference value, bool includeDefault, float width,
+        string? defaultLabel = null)
+    {
+        var preview = value == QualityPreference.Default && defaultLabel is not null ? defaultLabel : value.ToFriendlyString();
+        ImGui.SetNextItemWidth(width * ImGuiHelpers.GlobalScale);
+        using var combo = ImRaii.Combo(id, preview);
+        if (!combo)
+            return false;
+
+        var changed = false;
+        foreach (var option in Enum.GetValues<QualityPreference>())
+        {
+            if (option == QualityPreference.Default && !includeDefault)
+                continue;
+            var label = option == QualityPreference.Default && defaultLabel is not null ? defaultLabel : option.ToFriendlyString();
+            if (!ImGui.Selectable(label, option == value) || option == value)
+                continue;
+            value = option;
+            changed = true;
+        }
+
+        return changed;
     }
 
     public static string Gil(long amount) => amount.ToString("N0", CultureInfo.InvariantCulture);

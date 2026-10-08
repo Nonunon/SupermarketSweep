@@ -94,6 +94,15 @@ public class RoutePanel(SupermarketSweep manager)
         }
 
         ImGuiEx.Tooltip("When shopping North America, also pull Materia (Oceania) prices so the route can go there.\nNeeds a fresh Pull All Prices after changing.");
+
+        var quality = config.RouteDefaultQuality;
+        if (UiHelpers.QualityCombo("Default quality", ref quality, false, 110))
+        {
+            config.RouteDefaultQuality = quality;
+            EzConfig.Save();
+        }
+
+        ImGuiEx.Tooltip("HQ rule for items that don't set their own (Item tab).");
     }
 
     private void UpdatePlan()
@@ -128,9 +137,9 @@ public class RoutePanel(SupermarketSweep manager)
     {
         var config = SupermarketSweep.Config;
         var sb = new StringBuilder();
-        sb.Append($"{config.RouteMaxExtraPercent:0}|{config.RouteAllowOverbuy}|{config.ShoppingRegion}|{config.RouteIncludeOceania}");
+        sb.Append($"{config.RouteMaxExtraPercent:0}|{config.RouteAllowOverbuy}|{config.ShoppingRegion}|{config.RouteIncludeOceania}|{config.RouteDefaultQuality}");
         foreach (var (item, still) in wanted)
-            sb.Append($"|{item.ItemId}:{still}:{item.MarketDataFetchedAt?.Ticks}:{item.IsFetchingData}");
+            sb.Append($"|{item.ItemId}:{still}:{item.MarketDataFetchedAt?.Ticks}:{item.IsFetchingData}:{item.Quality}");
         return sb.ToString();
     }
 
@@ -175,7 +184,9 @@ public class RoutePanel(SupermarketSweep manager)
         {
             ImGui.TextColored(ImGuiColors.DalamudYellow, $"Can't fully cover {item.Name}: {missing} short.");
             ImGuiEx.Tooltip(SupermarketSweep.Config.RouteAllowOverbuy
-                ? "Not enough listings in the region."
+                ? item.EffectiveQuality == QualityPreference.HqOnly
+                    ? "Not enough HQ listings in the region (this item is set to HQ only)."
+                    : "Not enough listings in the region."
                 : "Not enough listings, or only stacks bigger than what's left. Allow overbuying to use those.");
         }
     }
@@ -219,7 +230,13 @@ public class RoutePanel(SupermarketSweep manager)
                                 $"{l.Quantity} x {UiHelpers.Gil(l.PricePerUnit)}{(l.Hq ? " HQ" : "")} from {l.RetainerName}")));
 
             ImGui.TableNextColumn();
-            ImGui.Text(quantity.ToString());
+            var hq = listings.Where(l => l.Hq).Sum(l => l.Quantity);
+            if (hq == 0)
+                ImGui.Text(quantity.ToString());
+            else if (hq == quantity)
+                ImGui.TextColored(ImGuiColors.DalamudYellow, $"{quantity} HQ");
+            else
+                ImGui.TextColored(ImGuiColors.DalamudOrange, $"{hq} HQ + {quantity - hq} NQ");
 
             ImGui.TableNextColumn();
             ImGui.Text(listings.Count.ToString());
