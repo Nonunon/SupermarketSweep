@@ -116,6 +116,7 @@ public class SupermarketSweep : IDalamudPlugin
         wantedItem.Quantity -= itemDetails.Item4;
         if (wantedItem.Quantity < 0)
             wantedItem.Quantity = 0;
+        SaveList();
     }
 
 
@@ -148,7 +149,7 @@ public class SupermarketSweep : IDalamudPlugin
             return;
         if (!VNavmesh_IPCSubscriber.IsEnabled)
         {
-            Svc.Chat.PrintError($"[Reborn Toolbox] VNavmesh is required for automatic movement");
+            Svc.Chat.PrintError($"[Supermarket Sweep] VNavmesh is required for automatic movement");
             return;
         }
 
@@ -200,7 +201,7 @@ public class SupermarketSweep : IDalamudPlugin
     private void MoveToNearestMarketboard()
     {
         var marketBoard = Svc.Objects
-            .Where(o => o.DataId == marketboardDataId || o.DataId == otherMoreStupidMarketboardDataId)
+            .Where(o => o.BaseId == marketboardDataId || o.BaseId == otherMoreStupidMarketboardDataId)
             .OrderBy(o => Vector3.Distance(o.Position, Player.Position)).FirstOrDefault();
         if (marketBoard == null)
         {
@@ -221,6 +222,7 @@ public class SupermarketSweep : IDalamudPlugin
         if (targetSystem == null)
         {
             Svc.Log.Error($"TargetSystem was null.");
+            return;
         }
 
         targetSystem->OpenObjectInteraction(
@@ -229,6 +231,11 @@ public class SupermarketSweep : IDalamudPlugin
 
     public void Dispose()
     {
+        _OnItemAdded?.Unsubscribe(OnItemAdded);
+        Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+        Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;
+        Svc.PluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUi;
+        WindowSystem.RemoveAllWindows();
         TaskManager.Dispose();
         ECommonsMain.Dispose();
     }

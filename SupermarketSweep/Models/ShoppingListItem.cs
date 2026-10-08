@@ -4,7 +4,6 @@ using ECommons;
 using ECommons.DalamudServices;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
-using Lumina.Excel.Sheets;
 using Newtonsoft.Json;
 using SupermarketSweep.IPC;
 
@@ -44,7 +43,7 @@ public class ShoppingListItem
 
     [Newtonsoft.Json.JsonIgnore] public Item? ItemRecord => _itemRecord;
 
-    [Newtonsoft.Json.JsonIgnore] public string Name => _itemRecord.Value.Name.ToString();
+    [Newtonsoft.Json.JsonIgnore] public string Name => _itemRecord?.Name.ToString() ?? $"Unknown item #{ItemId}";
 
     public uint ItemId { get; set; }
 

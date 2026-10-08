@@ -107,7 +107,7 @@ public class ResultsTable : Table<MarketDataListing>
             {
                 if (!Lifestream_IPCSubscriber.IsEnabled)
                 {
-                    Svc.Chat.PrintError($"[Reborn Toolbox] LifeStream is required to move between servers");
+                    Svc.Chat.PrintError($"[Supermarket Sweep] LifeStream is required to move between servers");
                     return;
                 }
 

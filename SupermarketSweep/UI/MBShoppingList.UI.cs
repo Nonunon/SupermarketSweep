@@ -93,7 +93,7 @@ public class MBShoppingList_UI : NostraWindow
             {
                 _lastMassRefresh = DateTime.Now;
                 var insult = GetRandomInsult();
-                Svc.Chat.Print($"[Reborn Toolbox] {insult}");
+                Svc.Chat.Print($"[Supermarket Sweep] {insult}");
                 foreach (var item in _manager.WantedItems)
                 {
                     item.ClearDataResponse();
@@ -155,7 +155,7 @@ public class MBShoppingList_UI : NostraWindow
             }
             catch (Exception e)
             {
-                Svc.Chat.PrintError("[Reborn Toolbox] Error importing clipboard text. See /xllog for details.");
+                Svc.Chat.PrintError("[Supermarket Sweep] Error importing clipboard text. See /xllog for details.");
                 Svc.Log.Error($"Error importing from clipboard: {e}");
             }
         }
@@ -179,7 +179,7 @@ public class MBShoppingList_UI : NostraWindow
 
         if (ImGui.Selectable(item.Name))
         {
-            var seString = new SeStringBuilder().AddText($"[Reborn Toolbox]").AddItemLink(item.ItemId).BuiltString;
+            var seString = new SeStringBuilder().AddText($"[Supermarket Sweep]").AddItemLink(item.ItemId).BuiltString;
             Svc.Chat.Print(seString);
         }
 
