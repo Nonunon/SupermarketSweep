@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Colors;
@@ -119,9 +119,9 @@ public class ItemPanel(SupermarketSweep manager)
         ImGui.AlignTextToFramePadding();
         if (item.IsFetchingData)
             ImGui.TextDisabled(item.Retries > 0 ? $"Fetching... (retry {item.Retries})" : "Fetching...");
-        else if (item.MarketDataRegion is { } region && region != SupermarketSweep.Config.ShoppingRegion)
+        else if (item.MarketDataRegion is { } region && !item.PricesMatchCurrentScope)
             ImGui.TextColored(ImGuiColors.DalamudOrange,
-                $"Prices are for {region.ToFriendlyString()}, refresh for the current region");
+                $"Prices are for {region.ToFriendlyString()}{(item.MarketDataIncludesOceania ? " + Oceania" : "")}, refresh for the current settings");
         else if (item.MarketDataFetchedAt is { } fetchedAt)
             ImGui.TextDisabled($"Updated {UiHelpers.FormatAge(DateTime.Now - fetchedAt)}");
         else

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
@@ -69,16 +69,14 @@ public static class UiHelpers
             return PriceStatus.Fetching;
         if (item.MarketDataRegion is null)
             return PriceStatus.None;
-        return item.MarketDataRegion == SupermarketSweep.Config.ShoppingRegion
-            ? PriceStatus.Fresh
-            : PriceStatus.OtherRegion;
+        return item.PricesMatchCurrentScope ? PriceStatus.Fresh : PriceStatus.OtherRegion;
     }
 
     public static (Vector4 Color, string Tooltip) Describe(PriceStatus status) => status switch
     {
         PriceStatus.Fetching => (ImGuiColors.DalamudYellow, "Pulling prices..."),
         PriceStatus.Fresh => (ImGuiColors.HealerGreen, "Has prices"),
-        PriceStatus.OtherRegion => (ImGuiColors.DalamudOrange, "Prices are for a different Region/Datacenter"),
+        PriceStatus.OtherRegion => (ImGuiColors.DalamudOrange, "Prices were pulled for a different Region/Datacenter or Oceania setting"),
         PriceStatus.Unmarketable => (ImGuiColors.DalamudGrey3, "Can't be bought on the marketboard"),
         _ => (ImGuiColors.DalamudGrey, "No prices pulled yet"),
     };

@@ -165,6 +165,8 @@ public class ShoppingListItem
 
     [Newtonsoft.Json.JsonIgnore] public RegionType? MarketDataRegion { get; private set; }
 
+    [Newtonsoft.Json.JsonIgnore] public bool MarketDataIncludesOceania { get; private set; }
+
     // One client for every request, and at most a handful in flight so "Pull All" on a big list stays polite.
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private static readonly SemaphoreSlim Throttle = new(6);
@@ -201,15 +203,37 @@ public class ShoppingListItem
         }
     }
 
-    [Newtonsoft.Json.JsonIgnore] public List<WorldListing> WorldListings { get; private set; } = [];
+    /// <summary>Whether a pull for <paramref name="region"/> should also include Oceania, per the route settings.</summary>
+    public static bool IncludesOceania(RegionType region) =>
+        region == RegionType.NorthAmerica && SupermarketSweep.Config.RouteIncludeOceania;
 
-    public class WorldListing
+    /// <summary>True when the current data was pulled with today's Region/Datacenter and Oceania settings.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public bool PricesMatchCurrentScope =>
+        MarketDataRegion == SupermarketSweep.Config.ShoppingRegion
+        && MarketDataIncludesOceania == IncludesOceania(SupermarketSweep.Config.ShoppingRegion);
+
+    /// <summary>How many more you need to buy, given what you own.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public long StillNeeded => Math.Max(0, Quantity - InventoryCount);
+
+    private static async Task<MarketDataResponse?> FetchRegionAsync(RegionType region, uint itemId)
     {
-        public string WorldName { get; set; }
-        public int Count { get; set; }
-        public long LowestPrice { get; set; }
-        public List<MarketDataListing> Listings { get; set; } = new List<MarketDataListing>();
+        await Throttle.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var json = await Http
+                .GetStringAsync($"https://universalis.app/api/v2/{region.ToUniversalisString()}/{itemId}")
+                .ConfigureAwait(false);
+            return string.IsNullOrEmpty(json) ? null : JsonConvert.DeserializeObject<MarketDataResponse>(json);
+        }
+        finally
+        {
+            Throttle.Release();
+        }
     }
+
+    private Task<MarketDataResponse?> FetchRegionAsync(RegionType region) => FetchRegionAsync(region, ItemId);
 
     /// <summary>Starts a pull in the background unless one is already running. Old data stays visible until it lands.</summary>
     public void RefreshMarketData() => _ = GetMarketDataResponseAsync();
@@ -241,42 +265,26 @@ public class ShoppingListItem
     private async Task FetchMarketDataAsync()
     {
         var region = SupermarketSweep.Config.ShoppingRegion;
+        var withOceania = IncludesOceania(region);
         while (Retries < 5)
         {
             Svc.Log.Debug($"GetMarketDataResponseAsync for item {Name}");
             try
             {
-                string responseString;
-                await Throttle.WaitAsync().ConfigureAwait(false);
-                try
+                var response = await FetchRegionAsync(region).ConfigureAwait(false);
+                if (response != null && withOceania)
                 {
-                    responseString = await Http
-                        .GetStringAsync($"https://universalis.app/api/v2/{region.ToUniversalisString()}/{ItemId}")
-                        .ConfigureAwait(false);
-                }
-                finally
-                {
-                    Throttle.Release();
+                    // Oceania is its own Universalis region; merge its listings in as if it were one big region.
+                    var oceania = await FetchRegionAsync(RegionType.Oceania).ConfigureAwait(false)
+                                  ?? throw new InvalidOperationException("Empty Oceania response");
+                    response.Listings.AddRange(oceania.Listings);
                 }
 
-                var response = string.IsNullOrEmpty(responseString)
-                    ? null
-                    : JsonConvert.DeserializeObject<MarketDataResponse>(responseString);
                 if (response != null)
                 {
-                    WorldListings = response.Listings
-                        .GroupBy(l => l.WorldName)
-                        .Select(g => new WorldListing
-                        {
-                            WorldName = g.Key,
-                            Count = g.Count(),
-                            LowestPrice = g.Min(l => l.Total),
-                            Listings = g.ToList()
-                        })
-                        .OrderBy(l => l.LowestPrice)
-                        .ToList();
                     MarketDataResponse = response;
                     MarketDataRegion = region;
+                    MarketDataIncludesOceania = withOceania;
                     MarketDataFetchedAt = DateTime.Now;
                     break;
                 }
