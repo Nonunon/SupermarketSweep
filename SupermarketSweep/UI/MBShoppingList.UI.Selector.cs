@@ -24,7 +24,8 @@ public class MbShoppingListUiSelector : ItemSelector<ShoppingListItem>
         ImGui.PushStyleColor(ImGuiCol.Text, textColor);
 
         bool selected = CurrentIdx == idx;
-        bool result = ImGui.Selectable(item.Name, selected);
+        // [owned/needed]; "###row" keeps the widget ID stable while the counts change.
+        bool result = ImGui.Selectable($"{item.Name} [{item.InventoryCount}/{item.Quantity}]###row", selected);
 
         // Pop the style colors after the Selectable
         ImGui.PopStyleColor(); // Pop in reverse order: HeaderActive, HeaderHovered, Header, Text
