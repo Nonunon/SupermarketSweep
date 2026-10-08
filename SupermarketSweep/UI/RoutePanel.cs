@@ -23,6 +23,9 @@ public class RoutePanel(SupermarketSweep manager)
     private string _planningFor = string.Empty;
     private bool _planFailed;
 
+    /// <summary>The latest finished plan (null until one exists). Kept current by <see cref="UpdatePlan"/>.</summary>
+    public RoutePlan? Plan => _plan;
+
     public void Draw()
     {
         DrawSettings();
@@ -105,7 +108,8 @@ public class RoutePanel(SupermarketSweep manager)
         ImGuiEx.Tooltip("HQ rule for items that don't set their own (Item tab).");
     }
 
-    private void UpdatePlan()
+    /// <summary>Re-plans in the background if anything changed. Cheap when nothing did; call from the framework thread.</summary>
+    public void UpdatePlan()
     {
         if (_planning is { IsCompleted: true })
         {

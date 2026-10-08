@@ -23,6 +23,8 @@ public class MainWindow : Window
     private readonly ItemPanel _itemPanel;
     private readonly RoutePanel _routePanel;
 
+    public RoutePanel Route => _routePanel;
+
     public MainWindow(SupermarketSweep manager) : base("Supermarket Sweep###SupermarketSweepMain")
     {
         _manager = manager;

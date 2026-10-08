@@ -181,7 +181,7 @@ public static class RoutePlanner
         return taken;
     }
 
-    private static List<MarketDataListing> FillFromTier(List<MarketDataListing> byUnitPrice, long quantity,
+    internal static List<MarketDataListing> FillFromTier(List<MarketDataListing> byUnitPrice, long quantity,
         HashSet<string>? allowedWorlds, bool allowOverbuy)
     {
         var taken = new List<MarketDataListing>();

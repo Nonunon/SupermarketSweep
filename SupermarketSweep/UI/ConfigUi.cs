@@ -33,6 +33,17 @@ public class ConfigUi : Window
         }
         ImGuiEx.Tooltip("The amount of time in seconds before considering Lifestream to be stuck.");
 
+        ImGui.Spacing();
+        var buyAssist = SupermarketSweep.Config.BuyAssistEnabled;
+        DrawBoolConfig("Buy Assistant", ref buyAssist, x => SupermarketSweep.Config.BuyAssistEnabled = x, "While the marketboard is open, outline the item to pick and the listings to buy, checked live against the route.\nIt never clicks or buys anything itself.");
+
+        var maxOver = SupermarketSweep.Config.BuyAssistMaxOverPercent;
+        if (ImGui.SliderFloat("Max over route price", ref maxOver, 0, 50, "%.0f%%"))
+            SupermarketSweep.Config.BuyAssistMaxOverPercent = maxOver;
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("Listings on the board can differ from the pulled prices. Recommend one only if its price per unit\nis at most this much above what the route planned to pay.");
+
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")

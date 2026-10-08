@@ -24,4 +24,10 @@ public class Config
     public bool RouteIncludeOceania { get; set; } = false;
     /// <summary>HQ rule for items that don't set their own.</summary>
     public QualityPreference RouteDefaultQuality { get; set; } = QualityPreference.PreferHq;
+
+    // Buy assistant
+    /// <summary>Show the buy assistant (and its outlines on the game's marketboard windows) while the board is open.</summary>
+    public bool BuyAssistEnabled { get; set; } = true;
+    /// <summary>Recommend a live listing only if its unit price is at most this much over what the route planned.</summary>
+    public float BuyAssistMaxOverPercent { get; set; } = 10;
 }
