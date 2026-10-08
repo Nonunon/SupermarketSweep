@@ -50,7 +50,7 @@ public class MainWindow : Window
             Icon = FontAwesomeIcon.Heart,
             IconOffset = new Vector2(1.5f, 1),
             Priority = 4,
-            ShowTooltip = () => ImGui.SetTooltip("With love, Nostra"),
+            ShowTooltip = () => ImGui.SetTooltip("With love, Rem"),
         });
     }
 
