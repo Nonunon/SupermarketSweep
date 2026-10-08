@@ -35,14 +35,22 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         WaitPurchase,
     }
 
-    private sealed class ItemRun(ShoppingListItem item, long target, PriceCaps? caps, List<MarketDataListing> planned)
+    private sealed class ItemRun(ShoppingListItem item, long target, PriceCaps? caps, List<MarketDataListing> planned,
+        List<MarketDataListing>? elsewhere)
     {
         public ShoppingListItem Item { get; } = item;
         public long Target { get; } = target;
         public PriceCaps? Caps { get; } = caps;
         public List<MarketDataListing> Planned { get; } = planned;
+
+        /// <summary>What the route plans on other worlds, for opportunistic extras (null if that setting is off).</summary>
+        public List<MarketDataListing>? Elsewhere { get; } = elsewhere;
+
         public long Bought { get; set; }
-        public long Remaining => Target - Bought;
+        public long Remaining => Math.Max(0, Target - Bought);
+
+        /// <summary>Bought beyond the target: those units replaced planned units elsewhere.</summary>
+        public long Extra => Math.Max(0, Bought - Target);
         public DateTime? SearchedAt { get; set; }
         public bool ForceReopen { get; set; }
         public int ScrollTries { get; set; }
@@ -94,8 +102,10 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         {
             var planned = BuyAdvisor.PlannedHere(plan, item, world);
             var target = Math.Min(item.StillNeeded, planned.Sum(l => l.Quantity));
-            if (target > 0)
-                _queue.Enqueue(new ItemRun(item, target, BuyAdvisor.Caps(plan, item, world, config.BuyAssistMaxOverPercent), planned));
+            var elsewhere = config.BuyAssistOpportunistic ? BuyAdvisor.PlannedElsewhere(plan, item, world) : null;
+            if (target > 0 || elsewhere is { Count: > 0 })
+                _queue.Enqueue(new ItemRun(item, target, BuyAdvisor.Caps(plan, item, world, config.BuyAssistMaxOverPercent),
+                    planned, elsewhere));
         }
 
         if (_queue.Count == 0)
@@ -281,12 +291,6 @@ public sealed unsafe class MarketboardBuyer : IDisposable
     private void PickListing(DateTime now)
     {
         var run = _current!;
-        if (run.Remaining <= 0)
-        {
-            NextItem();
-            return;
-        }
-
         if (MarketboardReader.ReadListings() is not { } read || read.ItemId != run.Item.ItemId)
         {
             BeginWaitListings(now, null);
@@ -294,12 +298,14 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         }
 
         var config = SupermarketSweep.Config;
+        var opportunity = run.Elsewhere is null ? null : new Opportunity(run.Elsewhere, run.Extra);
         var advice = BuyAdvisor.Advise(read.Listings, run.Item.EffectiveQuality, run.Remaining, run.Caps, run.Planned,
-            config.RouteAllowOverbuy);
+            config.RouteAllowOverbuy, opportunity);
         var index = Array.IndexOf(advice.Verdicts, ListingVerdict.Buy);
         if (index < 0)
         {
-            Chat($"{run.Item.Name}: nothing more here fits the price and quality rules ({run.Remaining} short).");
+            if (run.Remaining > 0)
+                Chat($"{run.Item.Name}: nothing more here fits the price and quality rules ({run.Remaining} short).");
             NextItem();
             return;
         }

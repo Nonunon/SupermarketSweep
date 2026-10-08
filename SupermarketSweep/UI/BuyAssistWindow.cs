@@ -104,13 +104,18 @@ public class BuyAssistWindow : Window
         var plannedHere = BuyAdvisor.PlannedHere(plan, item, world);
         // Aim for what the route buys on this world, not the whole need: it found the rest cheaper elsewhere.
         var target = Math.Min(stillNeeded, plannedHere.Sum(l => l.Quantity));
+        // ...unless the board here beats what it pays on other worlds (opportunistic extras).
+        var elsewhereListings = config.BuyAssistOpportunistic ? BuyAdvisor.PlannedElsewhere(plan, item, world) : [];
+        var opportunity = config.BuyAssistOpportunistic ? new Opportunity(elsewhereListings) : null;
+        static string Signature(IEnumerable<MarketDataListing> listings) =>
+            string.Join(",", listings.Select(l => $"{l.PricePerUnit}x{l.Quantity}{l.Hq}"));
         var key = $"{read.ItemId}|{item.EffectiveQuality}|{target}|{caps}|{config.RouteAllowOverbuy}|" +
-                  string.Join(",", plannedHere.Select(l => $"{l.PricePerUnit}x{l.Quantity}{l.Hq}")) + "|" +
+                  $"{Signature(plannedHere)}|{config.BuyAssistOpportunistic}:{Signature(elsewhereListings)}|" +
                   string.Join(",", read.Listings);
         if (key != _adviceKey || _advice is null)
         {
             _advice = BuyAdvisor.Advise(read.Listings, item.EffectiveQuality, target, caps, plannedHere,
-                config.RouteAllowOverbuy);
+                config.RouteAllowOverbuy, opportunity);
             _adviceKey = key;
         }
 
@@ -209,7 +214,7 @@ public class BuyAssistWindow : Window
             return;
         }
 
-        if (target <= 0)
+        if (target <= 0 && advice.ExtraQuantity == 0)
             return;
 
         var inventory = InventoryManager.Instance();
@@ -219,8 +224,15 @@ public class BuyAssistWindow : Window
         var buying = advice.Verdicts.Count(v => v == ListingVerdict.Buy);
         if (buying > 0)
             ImGui.TextColored(BuyColor, $"Buy the {buying} outlined listing(s): {advice.BuyQuantity} for {UiHelpers.Gil(advice.BuyCost)} gil");
-        else if (caps is not null)
+        else if (caps is not null && target > 0)
             ImGui.TextColored(ImGuiColors.DalamudYellow, "Nothing here fits the price and quality rules.");
+
+        if (advice.ExtraQuantity > 0)
+        {
+            ImGui.TextColored(BuyColor, $"Includes {advice.ExtraQuantity} extra: cheaper than the route pays elsewhere (saves ~{UiHelpers.Gil(advice.ExtraSaving)} gil).");
+            ImGuiEx.Tooltip("Each extra stack costs less than the dearest units the route planned on other worlds that it replaces.\n" +
+                            "After buying, the route replans, and a stop that's no longer needed drops out.\nSetting: Buy extras when cheaper here.");
+        }
 
         if (buying > 0 && advice.Short > 0)
             ImGui.TextColored(ImGuiColors.DalamudYellow, $"Still {advice.Short} short after that.");
@@ -256,6 +268,8 @@ public class BuyAssistWindow : Window
             var (color, label) = Describe(advice.Verdicts[i]);
             if (advice.FromRoute[i])
                 label = "Buy (route's pick)";
+            else if (advice.Extra[i])
+                label = "Buy (beats elsewhere)";
             ImGui.TableNextRow();
             if (showRetainer)
             {

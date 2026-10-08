@@ -47,6 +47,9 @@ public class ConfigUi : Window
             EzConfig.Save();
         ImGuiEx.Tooltip("Listings on the board can differ from the pulled prices. Recommend one only if its price per unit\nis at most this much above what the route planned to pay.");
 
+        var opportunistic = SupermarketSweep.Config.BuyAssistOpportunistic;
+        DrawBoolConfig("Buy extras when cheaper here", ref opportunistic, x => SupermarketSweep.Config.BuyAssistOpportunistic = x, "Besides what the route plans for this world, also recommend (and buy) listings that cost less than the units\nthe route plans on other worlds. The route then replans, and a stop that's no longer needed drops out.");
+
         DrawAutomationConfig();
 
         ImGui.Spacing();

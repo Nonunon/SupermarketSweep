@@ -30,6 +30,8 @@ public class Config
     public bool BuyAssistEnabled { get; set; } = true;
     /// <summary>Recommend a live listing only if its unit price is at most this much over what the route planned.</summary>
     public float BuyAssistMaxOverPercent { get; set; } = 10;
+    /// <summary>Also recommend (and buy) extra listings here that beat what the route pays on other worlds.</summary>
+    public bool BuyAssistOpportunistic { get; set; } = true;
     /// <summary>How much the buy assistant clicks by itself.</summary>
     public BuyAutomation BuyAutomation { get; set; } = BuyAutomation.OutlineOnly;
     /// <summary>Pause between automated steps, in milliseconds (randomized by 30% either way).</summary>

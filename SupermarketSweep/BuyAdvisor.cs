@@ -36,14 +36,25 @@ public enum ListingVerdict
 public record PriceCaps(double? Hq, double? Nq, bool FromThisWorld);
 
 /// <param name="FromRoute">Per listing: recommended because it's exactly what the route planned.</param>
-public record BuyAdvice(ListingVerdict[] Verdicts, bool[] FromRoute, long BuyQuantity, long BuyCost, long Short);
+/// <param name="Extra">Per listing: an opportunistic extra (cheaper than what the route plans on other worlds).</param>
+/// <param name="BuyQuantity">Everything recommended, extras included; likewise <paramref name="BuyCost"/>.</param>
+/// <param name="Short">How much of the route's amount for this world the recommendations leave uncovered.</param>
+/// <param name="ExtraSaving">What the extras save versus the units they replace on other worlds.</param>
+public record BuyAdvice(ListingVerdict[] Verdicts, bool[] FromRoute, bool[] Extra, long BuyQuantity, long BuyCost,
+    long Short, long ExtraQuantity, long ExtraSaving);
+
+/// <summary>
+/// What the route plans to buy for an item on other worlds: extra purchases here may replace those units when cheaper.
+/// </summary>
+/// <param name="AlreadyReplaced">Units already replaced by extras bought earlier in the same run (dearest first).</param>
+public record Opportunity(IReadOnlyList<MarketDataListing> PlannedElsewhere, long AlreadyReplaced = 0);
 
 /// <summary>
 /// Decides which live listings to buy for one item: the Universalis-based route is only a guide, the board is the truth.
 /// A listing qualifies if its quality fits the item's rule, its unit price is within <c>maxOverPercent</c> of what the
-/// route planned to pay, and (without overbuy) it isn't bigger than what's still needed. The route's own listings are
-/// recommended first where they're still on the board; the rest is filled with the route planner's own rules, so the
-/// board and the route agree on what "cheapest" means.
+/// route planned to pay, and (without overbuy) it isn't bigger than what's still needed. The route's own listings first
+/// and a plain cheapest fill are compared, and the better one is recommended. With an <see cref="Opportunity"/>, listings
+/// that beat what the route pays on other worlds are recommended on top, as extras.
 /// </summary>
 public static class BuyAdvisor
 {
@@ -88,9 +99,19 @@ public static class BuyAdvisor
             .Select(p => p.Listing)
             .ToList() ?? [];
 
+    /// <summary>What the route plans to buy for this item on worlds other than <paramref name="world"/>.</summary>
+    public static List<MarketDataListing> PlannedElsewhere(RoutePlan? plan, ShoppingListItem item, string? world) =>
+        plan?.Stops.Where(s => s.World != world)
+            .SelectMany(s => s.Purchases)
+            .Where(p => p.Item.ItemId == item.ItemId)
+            .Select(p => p.Listing)
+            .ToList() ?? [];
+
+    /// <param name="stillNeeded">How many to buy here: the route's amount for this world, capped by what's needed.</param>
     /// <param name="plannedHere">The route's listings for this item on this world (<see cref="PlannedHere"/>).</param>
+    /// <param name="opportunity">If given, also recommend extras that beat what the route pays on other worlds.</param>
     public static BuyAdvice Advise(IReadOnlyList<LiveListing> live, QualityPreference quality, long stillNeeded,
-        PriceCaps? caps, IReadOnlyList<MarketDataListing> plannedHere, bool allowOverbuy)
+        PriceCaps? caps, IReadOnlyList<MarketDataListing> plannedHere, bool allowOverbuy, Opportunity? opportunity = null)
     {
         var verdicts = new ListingVerdict[live.Count];
         var index = new Dictionary<MarketDataListing, int>();
@@ -133,8 +154,87 @@ public static class BuyAdvisor
             unmatched.RemoveAt(planned);
         }
 
-        var quantity = chosen.Sum(l => l.Quantity);
-        return new BuyAdvice(verdicts, fromRoute, quantity, chosen.Sum(l => l.Cost), Math.Max(0, stillNeeded - quantity));
+        var baseQuantity = chosen.Sum(l => l.Quantity);
+        var extra = new bool[live.Count];
+        long extraQuantity = 0, extraCost = 0, extraSaving = 0;
+        if (opportunity is not null)
+        {
+            // Cheapest first, each whole stack paired with the dearest units it would replace elsewhere, and kept only
+            // if it costs less than those (so one pricey unit elsewhere can't justify a big pile here). Listings above
+            // this world's cap still count: what matters is beating the other worlds.
+            var replaceable = new ReplaceableUnits(opportunity.PlannedElsewhere);
+            replaceable.Consume(opportunity.AlreadyReplaced, false);
+            var candidates = Enumerable.Range(0, live.Count)
+                .Where(i => verdicts[i] != ListingVerdict.Buy && !live[i].Yours
+                            && (quality != QualityPreference.HqOnly || live[i].Hq))
+                .OrderBy(i => live[i].UnitCost);
+            foreach (var i in candidates)
+            {
+                var listing = live[i];
+                // NQ may only replace NQ planned elsewhere (never a quiet HQ to NQ swap); HQ may replace either.
+                var nqOnly = quality != QualityPreference.Any && !listing.Hq;
+                var available = replaceable.Available(nqOnly);
+                var units = Math.Min(listing.Quantity, available);
+                if (units <= 0 || (!allowOverbuy && listing.Quantity > available))
+                    continue;
+                var replacedCost = replaceable.Peek(units, nqOnly);
+                if (listing.Cost >= replacedCost)
+                    continue;
+
+                replaceable.Consume(units, nqOnly);
+                verdicts[i] = ListingVerdict.Buy;
+                extra[i] = true;
+                extraQuantity += listing.Quantity;
+                extraCost += listing.Cost;
+                extraSaving += (long)Math.Round(replacedCost - listing.Cost);
+            }
+        }
+
+        return new BuyAdvice(verdicts, fromRoute, extra, baseQuantity + extraQuantity, chosen.Sum(l => l.Cost) + extraCost,
+            Math.Max(0, stillNeeded - baseQuantity), extraQuantity, extraSaving);
+    }
+
+    /// <summary>The units the route plans elsewhere for one item, dearest first, as stacks of equal unit cost.</summary>
+    private sealed class ReplaceableUnits
+    {
+        private sealed class Stack(double unitCost, bool hq, long left)
+        {
+            public double UnitCost { get; } = unitCost;
+            public bool Hq { get; } = hq;
+            public long Left { get; set; } = left;
+        }
+
+        private readonly List<Stack> _stacks;
+
+        public ReplaceableUnits(IEnumerable<MarketDataListing> planned) =>
+            _stacks = planned.Where(l => l.Quantity > 0)
+                .Select(l => new Stack((double)l.Cost / l.Quantity, l.Hq, l.Quantity))
+                .OrderByDescending(s => s.UnitCost)
+                .ToList();
+
+        public long Available(bool nqOnly) => _stacks.Where(s => !nqOnly || !s.Hq).Sum(s => s.Left);
+
+        /// <summary>What the dearest <paramref name="units"/> (NQ only, if asked) cost at the route's prices.</summary>
+        public double Peek(long units, bool nqOnly) => Take(units, nqOnly, false);
+
+        public void Consume(long units, bool nqOnly) => Take(units, nqOnly, true);
+
+        private double Take(long units, bool nqOnly, bool consume)
+        {
+            double cost = 0;
+            foreach (var stack in _stacks.Where(s => !nqOnly || !s.Hq))
+            {
+                if (units <= 0)
+                    break;
+                var take = Math.Min(units, stack.Left);
+                cost += take * stack.UnitCost;
+                units -= take;
+                if (consume)
+                    stack.Left -= take;
+            }
+
+            return cost;
+        }
     }
 
     private static bool SameListing(MarketDataListing a, MarketDataListing b) =>
