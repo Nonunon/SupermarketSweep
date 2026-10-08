@@ -7,9 +7,12 @@ riderModule.iml
 # IDE state
 .vs/
 .idea/
+.vscode/
 *.user
 *.DotSettings.user
 
 # Local-only files, not part of what ships
 CLAUDE.md
 /build/
+# Silences ECommons' own warnings for the owner's builds; others are fine seeing them
+/Directory.Build.targets
