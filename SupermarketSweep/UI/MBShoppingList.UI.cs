@@ -82,24 +82,13 @@ public class MBShoppingList_UI : NostraWindow
             EzConfig.Save();
         }
 
-        ImGui.SetNextItemWidth(100);
-
-
-        if (SupermarketSweep.Config.ExpertMode)
+        var fetching = _manager.WantedItems.Count(i => i.IsFetchingData);
+        var pullAllLabel = fetching > 0 ? $"Pulling Prices ({fetching} left)..." : "Pull All Prices";
+        if (ImGuiUtil.DrawDisabledButton($"{pullAllLabel}###pullAll", Vector2.Zero,
+                "Pull fresh Universalis prices for every item on the list.", fetching > 0))
         {
-            if (ImGuiUtil.DrawDisabledButton("Refresh All Market Data", new Vector2(0, 0),
-                    "Refresh all Market Data for all items in the list\n(Can only be run every 30 seconds)\nWARNING: This will cause the Universalis servers to suffer!",
-                    DateTime.Now < _lastMassRefresh + TimeSpan.FromSeconds(30)))
-            {
-                _lastMassRefresh = DateTime.Now;
-                var insult = GetRandomInsult();
-                Svc.Chat.Print($"[Supermarket Sweep] {insult}");
-                foreach (var item in _manager.WantedItems)
-                {
-                    item.ClearDataResponse();
-                    Task.Run(item.GetMarketDataResponseAsync);
-                }
-            }
+            foreach (var item in _manager.WantedItems)
+                item.RefreshMarketData();
         }
 
         ImGui.Spacing();
@@ -169,8 +158,6 @@ public class MBShoppingList_UI : NostraWindow
         }
     }
 
-    private DateTime _lastMassRefresh = DateTime.MinValue;
-
     private void DrawWantedItem(ShoppingListItem? item)
     {
         ImGui.BeginChild("Wanted Item");
@@ -204,54 +191,54 @@ public class MBShoppingList_UI : NostraWindow
         ImGuiEx.Tooltip(
             "Amount of this item you have across all characters (including retainers and alts)\nSourced from Allagan Tools\nSee Allagan Tools for detailed information");
 
-        string buttonLabel;
-        string buttonDescription;
-        bool buttonDisabled;
-
         if (item.IsMarketable)
         {
             DrawItemSearch(item);
+
+            if (SupermarketSweep.Config.AutoPullMarketData
+                && item.NeedsMarketData(TimeSpan.FromMinutes(SupermarketSweep.Config.MarketDataMaxAgeMinutes)))
+                item.RefreshMarketData();
+
+            if (ImGuiUtil.DrawDisabledButton($"Refresh Prices##{item.ItemId}", Vector2.Zero,
+                    "Pull fresh prices for this item from Universalis.", item.IsFetchingData))
+                item.RefreshMarketData();
+
+            ImGui.SameLine();
             if (item.IsFetchingData)
-            {
-                buttonLabel = $"Fetching data...";
-                buttonDescription = $"Currently fetching data from Universalis. Retries: {item.Retries}";
-                buttonDisabled = true;
-            }
-            else if (item.MarketDataResponse == null)
-            {
-                buttonLabel = "Pull Market Data";
-                buttonDescription = $"Pull Market Data from Universalis.";
-                buttonDisabled = false;
-            }
+                ImGui.TextDisabled(item.Retries > 0 ? $"Fetching... (retry {item.Retries})" : "Fetching...");
+            else if (item.MarketDataFetchedAt is { } fetchedAt)
+                ImGui.TextDisabled($"Updated {FormatAge(DateTime.Now - fetchedAt)}");
             else
-            {
-                buttonLabel = "Refresh Market Data";
-                buttonDescription = $"Refresh Market Data from Universalis.";
-                buttonDisabled = false;
-            }
-
-            if (OtterGui.ImGuiUtil.DrawDisabledButton(buttonLabel, new Vector2(0, 0), buttonDescription,
-                    buttonDisabled))
-            {
-                if (item.MarketDataResponse != null)
-                    item.ClearDataResponse();
-
-                Task.Run(item.GetMarketDataResponseAsync);
-            }
+                ImGui.TextDisabled("No price data yet");
         }
         else
         {
             ImGui.Text("This item cannot be purchased on the Market Board");
         }
 
-        // If data is present, display it
-        if (item.MarketDataResponse != null && !item.IsFetchingData)
+        // Older data stays on screen while a refresh is running, so the table doesn't blink out.
+        if (item.MarketDataResponse != null)
         {
             var resultsTable = new ResultsTable(_manager, item.MarketDataResponse.Listings);
             resultsTable.Draw(10);
         }
 
         ImGui.EndChild();
+    }
+
+    private static string FormatAge(TimeSpan age) => age.TotalMinutes < 1 ? "just now"
+        : age.TotalHours < 1 ? $"{(int)age.TotalMinutes}m ago"
+        : $"{(int)age.TotalHours}h {age.Minutes}m ago";
+
+    // Opening the window pulls anything stale in the background, so prices are usually ready before you click.
+    public override void OnOpen()
+    {
+        if (!SupermarketSweep.Config.AutoPullMarketData)
+            return;
+
+        var maxAge = TimeSpan.FromMinutes(SupermarketSweep.Config.MarketDataMaxAgeMinutes);
+        foreach (var item in _manager.WantedItems.Where(i => i.NeedsMarketData(maxAge)))
+            item.RefreshMarketData();
     }
 
     private unsafe void DrawItemSearch(ShoppingListItem item)
@@ -476,47 +463,4 @@ public class MBShoppingList_UI : NostraWindow
             }
         }
     }
-
-    private static readonly Random RandomGenerator = new Random();
-
-    private static string GetRandomInsult()
-    {
-        int index = RandomGenerator.Next(Insults.Count); // Random index from 0 to the length of the insult list
-        return Insults[index];
-    }
-
-    private static readonly List<string> Insults = new List<string>
-    {
-        "Way to hammer the API like a clueless fuckstick. Hope you’re proud of yourself, dipshit.",
-        "Congrats, you API-throttling asshole. Keep this shit up, and the server’s going to crash just for you.",
-        "Nice job, you fucking data parasite. The server’s definitely enjoying your selfish bullshit.",
-        "Look at you, a total bandwidth-sucking dickhead. I bet you feel real clever, huh?",
-        "Bravo, douche-canoe. Because what the API really needed was another inconsiderate prick like you.",
-        "Great going, API-slammer. Do us all a favor and learn some patience, you trigger-happy bastard.",
-        "Wow, look at you hammering the server like a complete shit-for-brains. Slow the fuck down, maybe?",
-        "Fucking excellent, now the API has another selfish prick to deal with. You must be so proud.",
-        "Good job, you inconsiderate dicknugget. Maybe let the API breathe for a fucking second?",
-        "Oh fantastic, a throttling fucknugget with zero impulse control. The API’s really going to love you.",
-        "Way to go, you goddamn server-hammering toolbag. Keep clicking, maybe it'll just crash for you.",
-        "Holy shit, do you even know what patience is, or are you just this much of an API-smashing douche?",
-        "Good one, you dumbfuck. Slamming the API like that really shows how little you care about anyone else.",
-        "Look at this fucking guy, treating the API like a punching bag. Get a grip, you reckless bastard.",
-        "Nice going, throttle-happy fuckwit. It's like you're trying to kill the server on purpose.",
-        "Well done, dickhead. Your API abuse is exactly what the server didn’t need right now.",
-        "You really are an inconsiderate shithead, aren't you? The API’s going to fucking love you for this.",
-        "Way to spam the API like a goddamn moron. Maybe give the server a break, shitheel?",
-        "Fucking phenomenal, you're the reason rate limits exist, you API-hammering asshole.",
-        "Jesus Christ, slow the fuck down, you refresh-spamming fuckstick. The API isn't your personal bitch.",
-        "Impressive, you data-hungry douchebag. Do you ever stop to think, or do you just slam buttons like an idiot?",
-        "Wow, really hammering that API, huh? What are you, some kind of bandwidth-sucking shit-for-brains?",
-        "Goddamn it, give the API a fucking rest, you self-centered prick.",
-        "Fucking perfect. Another clueless dipshit who doesn’t give a fuck about anyone else’s server performance.",
-        "Congrats, you’re officially the API’s worst fucking nightmare. Well done, you inconsiderate fuck.",
-        "You’ve got to be shitting me. Could you throttle the API any harder, you absolute bastard?",
-        "Holy shit, maybe ease up on the server abuse, you API-slamming fucker.",
-        "Good job, douche-nozzle. Your ability to hammer the API is only matched by your complete lack of awareness.",
-        "Look at you, all trigger-happy and API-abusing. Are you really this much of a selfish bastard?",
-        "Fantastic. Another brain-dead fuckwit pounding the API like it owes them something.",
-        "You refresh-spamming assclown. Keep this up, and maybe the server will just explode for you."
-    };
 }

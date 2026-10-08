@@ -83,14 +83,6 @@ public class SupermarketSweep : IDalamudPlugin
     [Cmd("/shop", "Opens the shopping list UI.")]
     public void OnCommand(string command, string args)
     {
-        if (!string.IsNullOrEmpty(args) && args.ToLower() == "expert")
-        {
-            Config.ExpertMode = true;
-            EzConfig.Save();
-            Svc.Chat.Print("[Supermarket Sweep] Expert mode enabled.");
-            return;
-        }
-
         OpenMainUi();
     }
 

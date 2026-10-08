@@ -9,10 +9,11 @@ public class Config : IEzConfig
 {
     public bool AllCharactersInventory { get; set; } = false;
     public RegionType ShoppingRegion { get; set; } = RegionType.NorthAmerica;
-    public bool ExpertMode { get; set; } = false;
     public int LifeStreamTimeout { get; set; } = 300;
     public bool RemoveQuantityAutomatically { get; set; }
     public bool UseVnavPathing { get; set; } = true;
     public float SearchListHeight { get; set; } = 260;
     public float ShoppingListWidth { get; set; } = 200;
+    public bool AutoPullMarketData { get; set; } = true;
+    public int MarketDataMaxAgeMinutes { get; set; } = 10;
 }

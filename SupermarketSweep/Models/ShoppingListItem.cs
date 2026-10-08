@@ -159,11 +159,25 @@ public class ShoppingListItem
 
     [Newtonsoft.Json.JsonIgnore] public MarketDataResponse? MarketDataResponse { get; private set; }
 
+    /// <summary>When <see cref="MarketDataResponse"/> was pulled, and for which region. Null until the first pull.</summary>
+    [Newtonsoft.Json.JsonIgnore] public DateTime? MarketDataFetchedAt { get; private set; }
+
+    [Newtonsoft.Json.JsonIgnore] public RegionType? MarketDataRegion { get; private set; }
+
+    // One client for every request, and at most a handful in flight so "Pull All" on a big list stays polite.
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly SemaphoreSlim Throttle = new(6);
+
+    // After a pull gives up, automatic pulls leave this item alone for a bit instead of retrying every frame.
+    private static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(30);
+
     [JsonIgnore] private Task? _marketDataTask;
 
     [JsonIgnore] private int _retries;
 
     [JsonIgnore] private bool _isFetchingData;
+
+    [JsonIgnore] private DateTime _lastFailedAt = DateTime.MinValue;
 
     [Newtonsoft.Json.JsonIgnore]
     public bool IsFetchingData
@@ -191,7 +205,7 @@ public class ShoppingListItem
         }
     }
 
-    public List<WorldListing> WorldListings { get; private set; } = [];
+    [Newtonsoft.Json.JsonIgnore] public List<WorldListing> WorldListings { get; private set; } = [];
 
     public class WorldListing
     {
@@ -201,10 +215,27 @@ public class ShoppingListItem
         public List<MarketDataListing> Listings { get; set; } = new List<MarketDataListing>();
     }
 
-    public void ClearDataResponse()
+    /// <summary>
+    /// True when an automatic pull should happen: no data yet, data for a different region, or data older than
+    /// <paramref name="maxAge"/>. Never true while a pull is running or shortly after one failed.
+    /// </summary>
+    public bool NeedsMarketData(TimeSpan maxAge)
     {
-        MarketDataResponse = null;
+        if (!IsMarketable || IsFetchingData)
+            return false;
+        lock (this)
+        {
+            if (DateTime.Now - _lastFailedAt < FailureCooldown)
+                return false;
+        }
+
+        return MarketDataFetchedAt is null
+               || MarketDataRegion != SupermarketSweep.Config.ShoppingRegion
+               || DateTime.Now - MarketDataFetchedAt > maxAge;
     }
+
+    /// <summary>Starts a pull in the background unless one is already running. Old data stays visible until it lands.</summary>
+    public void RefreshMarketData() => _ = GetMarketDataResponseAsync();
 
     public async Task GetMarketDataResponseAsync()
     {
@@ -222,7 +253,7 @@ public class ShoppingListItem
             {
                 _isFetchingData = true;
                 _retries = 0;
-                _marketDataTask = FetchMarketDataAsync();
+                _marketDataTask = Task.Run(FetchMarketDataAsync);
                 existingTask = _marketDataTask;
             }
         }
@@ -232,22 +263,32 @@ public class ShoppingListItem
 
     private async Task FetchMarketDataAsync()
     {
-        while (_retries < 5 && MarketDataResponse == null)
+        var region = SupermarketSweep.Config.ShoppingRegion;
+        var succeeded = false;
+        while (Retries < 5)
         {
             Svc.Log.Debug($"GetMarketDataResponseAsync for item {Name}");
             try
             {
-                using var client = new HttpClient();
-
-                var responseString = await client
-                    .GetStringAsync(
-                        $"https://universalis.app/api/v2/{SupermarketSweep.Config.ShoppingRegion.ToUniversalisString()}/{ItemId}")
-                    .ConfigureAwait(false);
-
-                if (!string.IsNullOrEmpty(responseString))
+                string responseString;
+                await Throttle.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    MarketDataResponse = JsonConvert.DeserializeObject<MarketDataResponse>(responseString);
-                    WorldListings = MarketDataResponse!.Listings
+                    responseString = await Http
+                        .GetStringAsync($"https://universalis.app/api/v2/{region.ToUniversalisString()}/{ItemId}")
+                        .ConfigureAwait(false);
+                }
+                finally
+                {
+                    Throttle.Release();
+                }
+
+                var response = string.IsNullOrEmpty(responseString)
+                    ? null
+                    : JsonConvert.DeserializeObject<MarketDataResponse>(responseString);
+                if (response != null)
+                {
+                    WorldListings = response.Listings
                         .GroupBy(l => l.WorldName)
                         .Select(g => new WorldListing
                         {
@@ -258,33 +299,33 @@ public class ShoppingListItem
                         })
                         .OrderBy(l => l.LowestPrice)
                         .ToList();
-                    break; // Fetch successful
+                    MarketDataResponse = response;
+                    MarketDataRegion = region;
+                    MarketDataFetchedAt = DateTime.Now;
+                    succeeded = true;
+                    break;
                 }
-                else
-                {
-                    Svc.Log.Warning($"Unable to get market data response from Universalis: {responseString}");
-                    lock (this)
-                    {
-                        _retries++;
-                    }
 
-                    await Task.Delay(2000);
-                }
+                Svc.Log.Warning($"Empty market data response from Universalis for {Name}");
             }
-            catch
+            catch (Exception ex)
             {
-                lock (this)
-                {
-                    _retries++;
-                }
-
-                await Task.Delay(2000);
+                Svc.Log.Warning($"Universalis request for {Name} failed: {ex.Message}");
             }
+
+            lock (this)
+            {
+                _retries++;
+            }
+
+            await Task.Delay(2000).ConfigureAwait(false);
         }
 
         lock (this)
         {
             _isFetchingData = false;
+            if (!succeeded)
+                _lastFailedAt = DateTime.Now;
         }
     }
 }

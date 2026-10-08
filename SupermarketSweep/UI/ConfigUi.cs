@@ -32,6 +32,17 @@ public class ConfigUi : NostraWindow
             EzConfig.Save();
         }
         ImGuiUtil.HoverTooltip("The amount of time in seconds before considering Lifestream to be stuck.");
+
+        var autoPull = SupermarketSweep.Config.AutoPullMarketData;
+        DrawBoolConfig("Auto-pull Prices", ref autoPull, x => SupermarketSweep.Config.AutoPullMarketData = x, "If enabled, prices are pulled from Universalis automatically: for the selected item, and for the whole list when the window opens.\nAlso re-pulls when you change Region/Datacenter.");
+
+        var maxAge = SupermarketSweep.Config.MarketDataMaxAgeMinutes;
+        if (ImGui.InputInt("Re-pull After (minutes)", ref maxAge))
+        {
+            SupermarketSweep.Config.MarketDataMaxAgeMinutes = Math.Max(1, maxAge);
+            EzConfig.Save();
+        }
+        ImGuiUtil.HoverTooltip("How old prices can get before Auto-pull fetches them again.");
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")
