@@ -44,8 +44,16 @@ public class BuyAssistWindow : Window
         SizeCondition = ImGuiCond.FirstUseEver;
     }
 
-    public override bool DrawConditions() => SupermarketSweep.Config.BuyAssistEnabled
-                                             && (UiHelpers.IsMarketboardOpen || MarketboardReader.IsListingsOpen);
+    /// <summary>
+    /// Retainer selling opens the same listings window (to compare prices), but buying has nothing to do there, so the
+    /// assistant stays hidden while either of these is open.
+    /// </summary>
+    private static readonly string[] RetainerSellingAddons = ["RetainerSell", "RetainerSellList"];
+
+    public override unsafe bool DrawConditions() =>
+        SupermarketSweep.Config.BuyAssistEnabled
+        && (UiHelpers.IsMarketboardOpen || MarketboardReader.IsListingsOpen)
+        && !RetainerSellingAddons.Any(name => MarketboardReader.GetReadyAddon(name) != null);
 
     public override void Draw()
     {
