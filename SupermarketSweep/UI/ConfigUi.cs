@@ -54,7 +54,7 @@ public class ConfigUi : Window
 
         ImGui.Spacing();
         var logCallbacks = SupermarketSweep.Config.LogAddonCallbacks;
-        DrawBoolConfig("Log Marketboard Callbacks (debug)", ref logCallbacks, x => SupermarketSweep.Config.LogAddonCallbacks = x, "Writes every UI callback fired while the marketboard is open to /xllog, prefixed [Supermarket Sweep][AddonLogger].\nOnly watches; nothing is clicked or changed. Leave off unless you're gathering callbacks.");
+        DrawBoolConfig("Log Marketboard Callbacks (debug)", ref logCallbacks, x => SupermarketSweep.Config.LogAddonCallbacks = x, "Writes every UI callback fired while the marketboard is open to /xllog, prefixed [CallbackLogger].\nOnly watches; nothing is clicked or changed. Leave off unless you're gathering callbacks.");
 
     }
 

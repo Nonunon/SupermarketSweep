@@ -43,7 +43,7 @@ public class SupermarketSweep : IDalamudPlugin
     public ConfigUi ConfigWindow;
     public AboutWindow AboutWindow;
     public BuyAssistWindow BuyAssistWindow;
-    private readonly AddonLogger _addonLogger;
+    private readonly CallbackLogger _callbackLogger;
     public MarketboardBuyer Buyer;
 
     public TaskManagerConfiguration LifeStreamTaskConfig;
@@ -65,7 +65,7 @@ public class SupermarketSweep : IDalamudPlugin
 
         TaskManager = new TaskManager(DefaultTaskConfig);
         LoadList();
-        _addonLogger = new AddonLogger();
+        _callbackLogger = new CallbackLogger();
         Buyer = new MarketboardBuyer();
         _OnItemAdded =
             Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>(
@@ -285,7 +285,7 @@ public class SupermarketSweep : IDalamudPlugin
     public void Dispose()
     {
         _OnItemAdded?.Unsubscribe(OnItemAdded);
-        _addonLogger.Dispose();
+        _callbackLogger.Dispose();
         Buyer.Dispose();
         Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;

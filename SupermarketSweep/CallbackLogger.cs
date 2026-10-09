@@ -11,18 +11,18 @@ namespace SupermarketSweep;
 /// <summary>
 /// Debug tool for working out the marketboard's callbacks (setting <see cref="Config.LogAddonCallbacks"/>, off by default).
 /// While on, every addon callback fired while the marketboard is open, plus click events on its windows, is written to
-/// /xllog prefixed <c>[Supermarket Sweep][AddonLogger]</c>. It only watches: the original call always runs unchanged.
+/// /xllog prefixed <c>[CallbackLogger]</c> (Dalamud adds the plugin name in front). It only watches: the original call always runs unchanged.
 /// The hook is created once but only enabled while the setting is on.
 /// </summary>
-public sealed unsafe class AddonLogger : IDisposable
+public sealed unsafe class CallbackLogger : IDisposable
 {
-    private const string Prefix = "[Supermarket Sweep][AddonLogger]";
+    private const string Prefix = "[CallbackLogger]";
     private static readonly string[] MarketboardAddons = ["ItemSearch", "ItemSearchResult"];
 
     private readonly Hook<AtkUnitBase.Delegates.FireCallback>? _fireCallbackHook;
     private bool _enabled;
 
-    public AddonLogger()
+    public CallbackLogger()
     {
         try
         {

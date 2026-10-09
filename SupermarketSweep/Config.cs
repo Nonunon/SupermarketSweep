@@ -40,6 +40,6 @@ public class Config
     public int AutoBuyMaxGilPerRun { get; set; } = 10_000_000;
 
     // Debug
-    /// <summary>Log addon callbacks while the marketboard is open (see <see cref="AddonLogger"/>).</summary>
+    /// <summary>Log addon callbacks while the marketboard is open (see <see cref="CallbackLogger"/>).</summary>
     public bool LogAddonCallbacks { get; set; } = false;
 }

@@ -150,7 +150,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         }
         catch (Exception ex)
         {
-            Svc.Log.Error(ex, "[Supermarket Sweep] Buying failed");
+            Svc.Log.Error(ex, "Buying failed");
             Stop($"Error: {ex.Message}");
         }
     }
