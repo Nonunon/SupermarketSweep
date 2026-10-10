@@ -184,16 +184,17 @@ public class RoutePanel(SupermarketSweep manager)
         var config = SupermarketSweep.Config;
         var extra = config.RouteMaxExtraPercent;
         var overbuy = OverbuyRule.FromConfig(config);
+        var trips = TripCosts.FromConfig(config);
         _planningFor = key;
         (string, string)? here = Player.Available ? (Player.CurrentWorldName, Player.CurrentDataCenterName) : null;
-        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, here));
+        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, trips, here));
     }
 
     private static string PlanKey(List<(ShoppingListItem Item, long StillNeeded)> wanted)
     {
         var config = SupermarketSweep.Config;
         var sb = new StringBuilder();
-        sb.Append($"{config.RouteMaxExtraPercent:0}|{OverbuyRule.FromConfig(config)}|{config.ShoppingRegion}|{config.RouteIncludeOceania}|{config.RouteDefaultQuality}");
+        sb.Append($"{config.RouteMaxExtraPercent:0}|{OverbuyRule.FromConfig(config)}|{TripCosts.FromConfig(config)}|{(Player.Available ? Player.CurrentWorldName : "")}|{config.ShoppingRegion}|{config.RouteIncludeOceania}|{config.RouteDefaultQuality}");
         foreach (var (item, still) in wanted)
             sb.Append($"|{item.ItemId}:{still}:{item.MarketDataFetchedAt?.Ticks}:{item.IsFetchingData}:{item.Quality}");
         return sb.ToString();
@@ -237,6 +238,9 @@ public class RoutePanel(SupermarketSweep manager)
                                    : difference < 0 ? $"this saves {trips} trip(s) and {UiHelpers.Gil(-difference)} gil)"
                                    : $"this saves {trips} trip(s) for free)"));
         }
+
+        if (SupermarketSweep.Config.RouteShowTripCosts)
+            ImGui.TextDisabled($"Debug: trip costs {UiHelpers.Gil(plan.TripCost)}, so {UiHelpers.Gil(plan.Total + plan.TripCost)} as the planner weighs it.");
     }
 
     private static void DrawUnfilled(RoutePlan plan)

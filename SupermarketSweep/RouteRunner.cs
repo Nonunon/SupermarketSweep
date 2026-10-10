@@ -280,8 +280,9 @@ public sealed unsafe class RouteRunner : IDisposable
         var config = SupermarketSweep.Config;
         var extra = config.RouteMaxExtraPercent;
         var overbuy = OverbuyRule.FromConfig(config);
+        var trips = TripCosts.FromConfig(config);
         (string, string)? here = Player.Available ? (Player.CurrentWorldName, Player.CurrentDataCenterName) : null;
-        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, here));
+        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, trips, here));
         _phase = Phase.WaitPlan;
     }
 

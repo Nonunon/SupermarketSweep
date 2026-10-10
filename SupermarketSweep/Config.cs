@@ -50,4 +50,10 @@ public class Config
     public bool LogAddonCallbacks { get; set; } = false;
     /// <summary>Show a checkbox per stop on the Route tab; route runs skip unticked worlds (for testing).</summary>
     public bool RouteRunPickStops { get; set; } = false;
+    /// <summary>Show the planner's made-up travel costs on the Route tab and their settings here (debug).</summary>
+    public bool RouteShowTripCosts { get; set; } = false;
+    /// <summary>Made-up gil the planner charges per world visited other than the current one (<see cref="TripCosts"/>).</summary>
+    public int RouteWorldTripCost { get; set; } = 500;
+    /// <summary>Made-up gil the planner charges per data center visited other than the current one.</summary>
+    public int RouteDataCenterTripCost { get; set; } = 5000;
 }

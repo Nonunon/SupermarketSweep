@@ -34,6 +34,17 @@ public readonly record struct OverbuyRule(bool Unlimited, float MaxPercent, long
         : Math.Max(0, Math.Max((long)Math.Floor(need * Math.Max(0, MaxPercent) / 100.0), MaxUnits));
 }
 
+/// <summary>
+/// Made-up costs (in gil terms) the planner charges for travelling, so it doesn't add a trip to save a few gil: one
+/// per world other than the current one, and one per data center other than the current one (a lobby trip, much
+/// slower). Only used to choose the route; never part of the gil totals shown.
+/// </summary>
+public readonly record struct TripCosts(long PerWorld, long PerDataCenter)
+{
+    public static TripCosts FromConfig(Config config) =>
+        new(Math.Max(0, config.RouteWorldTripCost), Math.Max(0, config.RouteDataCenterTripCost));
+}
+
 public class RoutePlan
 {
     public List<WorldStop> Stops { get; init; } = [];
@@ -43,6 +54,9 @@ public class RoutePlan
     public long CheapestTotal { get; init; }
 
     public int CheapestWorldCount { get; init; }
+
+    /// <summary>The made-up travel cost the planner charged this route (<see cref="TripCosts"/>), for debugging.</summary>
+    public long TripCost { get; init; }
 
     /// <summary>Items the route can't fully cover (not enough listings, or exact amounts impossible without overbuying).</summary>
     public List<(ShoppingListItem Item, long Missing)> Unfilled { get; init; } = [];
@@ -58,8 +72,11 @@ public class RoutePlan
 ///
 /// 1. Find the cheapest way to buy each item using every world (greedy by price per unit, whole stacks only).
 /// 2. Then repeatedly try dropping one world: re-plan without it, and keep the drop if every item is still
-///    covered as well as before and the total stays within <c>maxExtraPercent</c> of the cheapest total.
-///    Of the valid drops each round, the one that leaves the lowest total wins. Stops when nothing can be dropped.
+///    covered as well as before and either the total stays within <c>maxExtraPercent</c> of the cheapest total, or
+///    the total plus the made-up <see cref="TripCosts"/> goes down (a trip that saves less than it "costs" isn't
+///    worth it, so the route sticks to the current data center unless another one is well worth the hop).
+///    Of the valid drops each round, the one leaving the fewest worlds wins, then the lowest total plus trip costs.
+///    Stops when nothing can be dropped.
 ///
 /// Stacks bigger than what's still needed are skipped unless the <see cref="OverbuyRule"/> allows the excess: then the
 /// cheapest such stack may finish the item. Without any allowance an item can end up partly covered.
@@ -94,7 +111,8 @@ public static class RoutePlanner
     /// <param name="currentWorld">Where the player is now (null if unknown), used to order the stops. Also read by the
     /// caller on the framework thread: Dalamud only allows touching the local player there.</param>
     public static RoutePlan Plan(IReadOnlyList<(ShoppingListItem Item, long StillNeeded)> wanted,
-        float maxExtraPercent, OverbuyRule overbuy, (string World, string DataCenter)? currentWorld = null)
+        float maxExtraPercent, OverbuyRule overbuy, TripCosts trips = default,
+        (string World, string DataCenter)? currentWorld = null)
     {
         var buying = wanted.Where(w => w.Item.IsMarketable && w.StillNeeded > 0).ToList();
         var needsPrices = buying.Where(w => w.Item.MarketDataResponse is null || !w.Item.PricesMatchCurrentScope)
@@ -105,6 +123,27 @@ public static class RoutePlanner
 
         var cheapest = FillAll(needs, null, overbuy);
         var budget = cheapest.Total * (1 + Math.Max(0, maxExtraPercent) / 100.0);
+
+        var dataCenters = new Dictionary<string, string>();
+        string DataCenter(string world)
+        {
+            if (!dataCenters.TryGetValue(world, out var dc))
+                dataCenters[world] = dc = DataCenterOf(world);
+            return dc;
+        }
+
+        long TripCost(Fill fill)
+        {
+            if (trips == default)
+                return 0;
+            var worlds = fill.Worlds.Where(w => w != currentWorld?.World).ToList();
+            var otherDcs = worlds.Select(DataCenter).Where(dc => dc != currentWorld?.DataCenter).Distinct().Count();
+            return worlds.Count * trips.PerWorld + otherDcs * trips.PerDataCenter;
+        }
+
+        long Effective(Fill fill) => fill.Total + TripCost(fill);
+        bool Better(Fill a, Fill b) =>
+            a.Worlds.Count < b.Worlds.Count || (a.Worlds.Count == b.Worlds.Count && Effective(a) < Effective(b));
 
         // Ban one used world per round; its purchases can move to ANY world still allowed, including ones the
         // cheapest plan never touched. Keep the ban if it doesn't add worlds, covers as much, and fits the budget.
@@ -119,14 +158,12 @@ public static class RoutePlanner
             {
                 var allowed = allowedWorlds.Where(w => w != world).ToHashSet();
                 var trial = FillAll(needs, allowed, overbuy);
-                if (trial.Total > budget
+                if ((trial.Total > budget && Effective(trial) >= Effective(current))
                     || trial.Worlds.Count > current.Worlds.Count
                     || needs.Any(n => trial.Covered(n) < cheapest.Covered(n)
                                       || trial.HqCovered(n) < cheapest.HqCovered(n)))
                     continue;
-                if (best is null
-                    || trial.Worlds.Count < best.Value.Fill.Worlds.Count
-                    || (trial.Worlds.Count == best.Value.Fill.Worlds.Count && trial.Total < best.Value.Fill.Total))
+                if (best is null || Better(trial, best.Value.Fill))
                     best = (trial, world);
             }
 
@@ -134,8 +171,7 @@ public static class RoutePlanner
                 break;
             allowedWorlds.Remove(best.Value.Banned);
             current = best.Value.Fill;
-            if (current.Worlds.Count < bestSeen.Worlds.Count
-                || (current.Worlds.Count == bestSeen.Worlds.Count && current.Total < bestSeen.Total))
+            if (Better(current, bestSeen))
                 bestSeen = current;
         }
 
@@ -146,6 +182,7 @@ public static class RoutePlanner
             Stops = BuildStops(current, currentWorld),
             CheapestTotal = cheapest.Total,
             CheapestWorldCount = cheapest.Worlds.Count,
+            TripCost = TripCost(current),
             Unfilled = needs.Where(n => current.Covered(n) < n.Quantity)
                 .Select(n => (n.Item, n.Quantity - current.Covered(n)))
                 .ToList(),
@@ -252,6 +289,9 @@ public static class RoutePlanner
         return taken;
     }
 
+    private static string DataCenterOf(string world) =>
+        ExcelWorldHelper.Get(world)?.DataCenter.ValueNullable?.Name.ToString() ?? "?";
+
     // Current world first, then the rest of its data center, then other data centers; biggest spends first within each.
     private static List<WorldStop> BuildStops(Fill fill, (string World, string DataCenter)? here)
     {
@@ -265,7 +305,7 @@ public static class RoutePlanner
             {
                 if (!stops.TryGetValue(listing.WorldName, out var stop))
                 {
-                    var dc = ExcelWorldHelper.Get(listing.WorldName)?.DataCenter.ValueNullable?.Name.ToString() ?? "?";
+                    var dc = DataCenterOf(listing.WorldName);
                     stops[listing.WorldName] = stop = new WorldStop(listing.WorldName, dc);
                 }
 

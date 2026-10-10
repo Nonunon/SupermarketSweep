@@ -59,6 +59,11 @@ public class ConfigUi : Window
         var pickStops = SupermarketSweep.Config.RouteRunPickStops;
         DrawBoolConfig("Pick Route Run Stops (debug)", ref pickStops, x => SupermarketSweep.Config.RouteRunPickStops = x, "Puts a checkbox on each stop in the Route tab. Run route skips the unticked worlds,\nso a test can cover just a world or two. The route itself is still planned over every world.");
 
+        var showTrips = SupermarketSweep.Config.RouteShowTripCosts;
+        DrawBoolConfig("Show Route Trip Costs (debug)", ref showTrips, x => SupermarketSweep.Config.RouteShowTripCosts = x, "The planner charges made-up gil for each extra world and data center, so it doesn't add a trip to save a\nfew gil. This shows those numbers on the Route tab and lets you tune them here.");
+        if (SupermarketSweep.Config.RouteShowTripCosts)
+            DrawTripCosts();
+
     }
 
     private static void DrawAutomationConfig()
@@ -108,6 +113,27 @@ public class ConfigUi : Window
         if (ImGui.IsItemDeactivatedAfterEdit())
             EzConfig.Save();
         ImGuiEx.Tooltip("Route runs only: a rough estimate of teleport costs per world, added to the route total in the check\nbefore a run. World visits from a hub aetheryte are free; getting to a hub first isn't.");
+    }
+
+    private static void DrawTripCosts()
+    {
+        var config = SupermarketSweep.Config;
+        using var indent = ImRaii.PushIndent();
+        var world = config.RouteWorldTripCost;
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputInt("Per extra world", ref world, 100, 1000))
+            config.RouteWorldTripCost = Math.Clamp(world, 0, 10_000_000);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("Made-up gil per world visited other than the one you're on. A world stays on the route only if it saves more.");
+
+        var dc = config.RouteDataCenterTripCost;
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputInt("Per extra data center", ref dc, 1000, 10_000))
+            config.RouteDataCenterTripCost = Math.Clamp(dc, 0, 10_000_000);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("Made-up gil per data center other than yours (a lobby trip), on top of the per-world cost.\nAnother data center only makes the route if it's this much better.");
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")
