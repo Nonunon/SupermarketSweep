@@ -259,13 +259,29 @@ public class RoutePanel(SupermarketSweep manager)
     private void DrawStop(WorldStop stop, int number)
     {
         using var id = ImRaii.PushId(stop.World);
-        if (!ImGui.CollapsingHeader($"{number}. {stop.World} ({stop.DataCenter}): {UiHelpers.Gil(stop.Subtotal)} gil###stop",
-                ImGuiTreeNodeFlags.DefaultOpen))
+        var skipped = manager.Runner.IsSkipped(stop);
+        if (!ImGui.CollapsingHeader($"{number}. {stop.World} ({stop.DataCenter}): {UiHelpers.Gil(stop.Subtotal)} gil" +
+                                    (skipped ? " (skipped by Run route)" : "") + "###stop", ImGuiTreeNodeFlags.DefaultOpen))
             return;
 
         if (ImGui.Button($"Travel to {stop.World}"))
             manager.TravelToWorld(stop.World);
         ImGuiEx.Tooltip("Lifestream travel, then walk to the marketboard if vnavmesh pathing is on");
+
+        if (SupermarketSweep.Config.RouteRunPickStops)
+        {
+            ImGui.SameLine();
+            var included = !skipped;
+            if (ImGui.Checkbox("Include in Run route", ref included))
+            {
+                if (included)
+                    manager.Runner.SkippedWorlds.Remove(stop.World);
+                else
+                    manager.Runner.SkippedWorlds.Add(stop.World);
+            }
+
+            ImGuiEx.Tooltip("Debug: Run route skips unticked worlds. Remembered by world name until the plugin reloads.");
+        }
 
         const ImGuiTableFlags flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp;
         using var table = ImRaii.Table("##stopItems", 4, flags);

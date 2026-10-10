@@ -84,6 +84,24 @@ public sealed unsafe class RouteRunner : IDisposable
 
     public PreflightResult? Preflight { get; private set; }
 
+    /// <summary>
+    /// Worlds unticked on the Route tab while the "pick route run stops" debug setting is on: the run skips them.
+    /// Kept by world name for the session (plans change after every world).
+    /// </summary>
+    public HashSet<string> SkippedWorlds { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool IsSkipped(WorldStop stop) => SupermarketSweep.Config.RouteRunPickStops && SkippedWorlds.Contains(stop.World);
+
+    /// <summary>The plan without skipped stops, for the preflight and the checks before a run.</summary>
+    private RoutePlan Picked(RoutePlan plan) => new()
+    {
+        Stops = plan.Stops.Where(s => !IsSkipped(s)).ToList(),
+        CheapestTotal = plan.CheapestTotal,
+        CheapestWorldCount = plan.CheapestWorldCount,
+        Unfilled = plan.Unfilled,
+        NeedsPrices = plan.NeedsPrices,
+    };
+
     /// <summary>The plan the run follows (replaced after every world).</summary>
     public RoutePlan? Plan { get; private set; }
 
@@ -267,8 +285,9 @@ public sealed unsafe class RouteRunner : IDisposable
         }
 
         var config = SupermarketSweep.Config;
-        Preflight = RoutePreflight.Check(Plan, Gil(), config.AutoBuyGilReserve, config.RouteTravelAllowancePerStop,
-            Player.Available ? Player.CurrentWorldName : null, Blockers(Plan));
+        var picked = Picked(Plan);
+        Preflight = RoutePreflight.Check(picked, Gil(), config.AutoBuyGilReserve, config.RouteTravelAllowancePerStop,
+            Player.Available ? Player.CurrentWorldName : null, Blockers(picked));
         _phase = Phase.Confirm;
     }
 
@@ -302,10 +321,13 @@ public sealed unsafe class RouteRunner : IDisposable
     private void PickStop(DateTime now)
     {
         var plan = Plan!;
-        _stop = plan.Stops.FirstOrDefault(s => !_visited.Contains(s.World));
+        _stop = plan.Stops.FirstOrDefault(s => !_visited.Contains(s.World) && !IsSkipped(s));
         if (_stop is null)
         {
-            Stop(plan.Unfilled.Count > 0 || plan.NeedsPrices.Count > 0
+            var skipped = plan.Stops.Where(s => !_visited.Contains(s.World) && IsSkipped(s)).Select(s => s.World).ToList();
+            Stop(skipped.Count > 0
+                ? $"Done with the picked worlds (skipped: {string.Join(", ", skipped)})."
+                : plan.Unfilled.Count > 0 || plan.NeedsPrices.Count > 0
                 ? "Route finished; some items couldn't be fully covered (see the Route tab)."
                 : "Route finished: everything's bought!");
             return;

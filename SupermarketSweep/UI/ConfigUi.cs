@@ -56,6 +56,9 @@ public class ConfigUi : Window
         var logCallbacks = SupermarketSweep.Config.LogAddonCallbacks;
         DrawBoolConfig("Log Marketboard Callbacks (debug)", ref logCallbacks, x => SupermarketSweep.Config.LogAddonCallbacks = x, "Writes every UI callback fired while the marketboard is open to /xllog, prefixed [CallbackLogger].\nOnly watches; nothing is clicked or changed. Leave off unless you're gathering callbacks.");
 
+        var pickStops = SupermarketSweep.Config.RouteRunPickStops;
+        DrawBoolConfig("Pick Route Run Stops (debug)", ref pickStops, x => SupermarketSweep.Config.RouteRunPickStops = x, "Puts a checkbox on each stop in the Route tab. Run route skips the unticked worlds,\nso a test can cover just a world or two. The route itself is still planned over every world.");
+
     }
 
     private static void DrawAutomationConfig()

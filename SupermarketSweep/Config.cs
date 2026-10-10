@@ -48,4 +48,6 @@ public class Config
     // Debug
     /// <summary>Log addon callbacks while the marketboard is open (see <see cref="CallbackLogger"/>).</summary>
     public bool LogAddonCallbacks { get; set; } = false;
+    /// <summary>Show a checkbox per stop on the Route tab; route runs skip unticked worlds (for testing).</summary>
+    public bool RouteRunPickStops { get; set; } = false;
 }
