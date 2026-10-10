@@ -1,0 +1,443 @@
+using Dalamud.Plugin.Services;
+using ECommons.DalamudServices;
+using ECommons.GameHelpers;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using SupermarketSweep.IPC;
+using SupermarketSweep.Models;
+using SupermarketSweep.UI;
+
+namespace SupermarketSweep;
+
+/// <summary>
+/// Runs the route by itself ("Run route" on the Route tab). A step machine on Framework.Update, like
+/// <see cref="MarketboardBuyer"/>, which it reuses for the buying at each world:
+///
+/// pull prices → replan → preflight (the player presses Start) → pick the next unvisited stop → make sure the
+/// marketboard is open (walk there if needed) → buy that world's stop → wait for owned counts to catch up → pull
+/// prices → replan → next stop.
+///
+/// For now it only buys on the world the player is on: when the next stop is on another world it stops and says so.
+/// It never enqueues its own tasks into the plugin's TaskManager (the walk queues more tasks as it runs, so anything
+/// queued after it would run first); it only starts the walk and watches.
+/// </summary>
+public sealed unsafe class RouteRunner : IDisposable
+{
+    private enum Phase
+    {
+        Idle,
+        PullPrices,
+        WaitPrices,
+        Plan,
+        WaitPlan,
+        Confirm,
+        PickStop,
+        WaitBoard,
+        Buy,
+        WaitBuy,
+        SettleCounts,
+    }
+
+    /// <summary>Territories the marketboard walk starts from (the world-travel hubs).</summary>
+    private static readonly HashSet<uint> HubTerritories = [129, 130, 132];
+
+    private readonly SupermarketSweep _manager;
+    private readonly HashSet<string> _visited = [];
+    private readonly List<string> _log = [];
+    private Phase _phase;
+    private DateTime _notBefore;
+    private DateTime _deadline;
+    private Task<RoutePlan>? _planning;
+    private bool _confirmed;
+    private WorldStop? _stop;
+    private bool _walkStarted;
+    private DateTime? _walkEndedAt;
+    private long _spent;
+
+    private List<ShoppingListItem> _settleItems = [];
+    private string _settleKey = string.Empty;
+    private DateTime _settleChangedAt;
+
+    public RouteRunner(SupermarketSweep manager)
+    {
+        _manager = manager;
+        Svc.Framework.Update += OnUpdate;
+    }
+
+    /// <summary>True from "Run route" until the run ends, including while the preflight waits for Start.</summary>
+    public bool IsRunning => _phase != Phase.Idle;
+
+    /// <summary>The preflight is shown and waits for <see cref="Confirm"/> or <see cref="Stop"/>.</summary>
+    public bool AwaitingConfirm => _phase == Phase.Confirm;
+
+    public PreflightResult? Preflight { get; private set; }
+
+    /// <summary>The plan the run follows (replaced after every world).</summary>
+    public RoutePlan? Plan { get; private set; }
+
+    public string Status { get; private set; } = string.Empty;
+
+    /// <summary>The world being bought on (or last bought on).</summary>
+    public string? CurrentStop => _stop?.World;
+
+    public long Spent => _spent + (_phase == Phase.WaitBuy ? _manager.Buyer.Spent : 0);
+
+    /// <summary>One line per world (and per notable event), for the Route tab.</summary>
+    public IReadOnlyList<string> Log => _log;
+
+    /// <summary>How the last run ended (null while running or before the first run).</summary>
+    public string? LastResult { get; private set; }
+
+    /// <summary>"Run route": pulls prices and plans, then shows the preflight. Call from the framework thread.</summary>
+    public void Begin()
+    {
+        if (IsRunning || _manager.Buyer.IsRunning)
+            return;
+        _visited.Clear();
+        _log.Clear();
+        _spent = 0;
+        _confirmed = false;
+        _stop = null;
+        Preflight = null;
+        Plan = null;
+        LastResult = null;
+        _phase = Phase.PullPrices;
+    }
+
+    /// <summary>"Start" on the preflight.</summary>
+    public void Confirm()
+    {
+        if (_phase != Phase.Confirm || Preflight is not { CanStart: true })
+            return;
+        _confirmed = true;
+        Chat("Running the route. Stop with the Stop button or /shop stop.");
+        _phase = Phase.PickStop;
+    }
+
+    public void Stop(string reason, bool problem = false)
+    {
+        if (!IsRunning)
+            return;
+        var wasConfirmed = _confirmed;
+        _phase = Phase.Idle;
+        _planning = null;
+        if (_manager.Buyer.IsRunning)
+        {
+            _manager.Buyer.Stop("Route run stopped.", BuyOutcome.Stopped);
+            _spent += _manager.Buyer.Spent;
+        }
+
+        if (_walkStarted && _manager.TaskManager.IsBusy)
+            _manager.TaskManager.Abort();
+        _walkStarted = false;
+
+        LastResult = wasConfirmed ? $"{reason} Spent {UiHelpers.Gil(_spent)} gil." : reason;
+        if (!wasConfirmed)
+            return; // cancelled at the preflight: nothing happened worth a chat line
+        if (problem)
+            Svc.Chat.PrintError($"[Supermarket Sweep] {LastResult}");
+        else
+            Chat(LastResult);
+    }
+
+    private void OnUpdate(IFramework framework)
+    {
+        if (!IsRunning || DateTime.Now < _notBefore)
+            return;
+        try
+        {
+            Tick(DateTime.Now);
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Error(ex, "Route run failed");
+            Stop($"Error: {ex.Message}", problem: true);
+        }
+    }
+
+    private void Tick(DateTime now)
+    {
+        switch (_phase)
+        {
+            case Phase.PullPrices:
+                PullPrices(now);
+                break;
+            case Phase.WaitPrices:
+                WaitPrices(now);
+                break;
+            case Phase.Plan:
+                StartPlan();
+                break;
+            case Phase.WaitPlan:
+                WaitPlan();
+                break;
+            case Phase.Confirm:
+                Status = "Waiting for Start";
+                break;
+            case Phase.PickStop:
+                PickStop(now);
+                break;
+            case Phase.WaitBoard:
+                WaitBoard(now);
+                break;
+            case Phase.Buy:
+                Buy(now);
+                break;
+            case Phase.WaitBuy:
+                WaitBuy(now);
+                break;
+            case Phase.SettleCounts:
+                SettleCounts(now);
+                break;
+        }
+    }
+
+    private void PullPrices(DateTime now)
+    {
+        Status = "Pulling prices";
+        foreach (var item in _manager.WantedItems.Where(i => i.IsMarketable && i.StillNeeded > 0))
+            item.RefreshMarketData();
+        _phase = Phase.WaitPrices;
+        _deadline = now + TimeSpan.FromSeconds(90);
+        _notBefore = now + TimeSpan.FromMilliseconds(500);
+    }
+
+    private void WaitPrices(DateTime now)
+    {
+        var fetching = _manager.WantedItems.Count(i => i.IsFetchingData);
+        Status = $"Pulling prices ({fetching} left)";
+        // A pull that never finishes keeps its old data; the plan flags anything without usable prices.
+        if (fetching == 0 || now > _deadline)
+            _phase = Phase.Plan;
+    }
+
+    private void StartPlan()
+    {
+        Status = "Planning";
+        // Owned counts (IPC) and the player's world are only readable here on the framework thread.
+        var wanted = _manager.WantedItems.Select(i => (Item: i, StillNeeded: i.StillNeeded)).ToList();
+        var config = SupermarketSweep.Config;
+        var extra = config.RouteMaxExtraPercent;
+        var overbuy = OverbuyRule.FromConfig(config);
+        (string, string)? here = Player.Available ? (Player.CurrentWorldName, Player.CurrentDataCenterName) : null;
+        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, here));
+        _phase = Phase.WaitPlan;
+    }
+
+    private void WaitPlan()
+    {
+        if (_planning is not { IsCompleted: true })
+            return;
+        if (!_planning.IsCompletedSuccessfully)
+        {
+            Svc.Log.Error($"Route planning failed: {_planning.Exception}");
+            Stop("Route planning hit an error (details in /xllog).", problem: true);
+            return;
+        }
+
+        Plan = _planning.Result;
+        _planning = null;
+        if (_confirmed)
+        {
+            _phase = Phase.PickStop;
+            return;
+        }
+
+        var config = SupermarketSweep.Config;
+        Preflight = RoutePreflight.Check(Plan, Gil(), config.AutoBuyGilReserve, config.RouteTravelAllowancePerStop,
+            Player.Available ? Player.CurrentWorldName : null, Blockers(Plan));
+        _phase = Phase.Confirm;
+    }
+
+    /// <summary>Reasons the run can't start. Reads plugin and game state, so call on the framework thread.</summary>
+    private List<string> Blockers(RoutePlan plan)
+    {
+        var config = SupermarketSweep.Config;
+        var blockers = new List<string>();
+        if (config.BuyAutomation == BuyAutomation.OutlineOnly)
+            blockers.Add("Buy automation is set to Outline only (settings).");
+        if (!AllaganTools_IPCSubscriber.IsEnabled)
+            blockers.Add("Allagan Tools isn't loaded: owned counts are needed to replan between worlds.");
+        if (_manager.Buyer.IsRunning)
+            blockers.Add("The buy assistant is already buying.");
+
+        var here = Player.Available ? Player.CurrentWorldName : null;
+        if (plan.Stops.FirstOrDefault() is { } first && first.World == here && !UiHelpers.IsMarketboardOpen
+            && config.UseVnavPathing)
+        {
+            if (!VNavmesh_IPCSubscriber.IsEnabled)
+                blockers.Add("vnavmesh isn't loaded, so the walk to the marketboard can't happen. Open the board first.");
+            else if (!HubTerritories.Contains(Svc.ClientState.TerritoryType))
+                blockers.Add("Go to Limsa Lominsa, Ul'dah or Gridania first (or open a marketboard).");
+            if (_manager.TaskManager.IsBusy)
+                blockers.Add("Travel or a walk is still in progress.");
+        }
+
+        return blockers;
+    }
+
+    private void PickStop(DateTime now)
+    {
+        var plan = Plan!;
+        _stop = plan.Stops.FirstOrDefault(s => !_visited.Contains(s.World));
+        if (_stop is null)
+        {
+            Stop(plan.Unfilled.Count > 0 || plan.NeedsPrices.Count > 0
+                ? "Route finished; some items couldn't be fully covered (see the Route tab)."
+                : "Route finished: everything's bought!");
+            return;
+        }
+
+        var here = Player.Available ? Player.CurrentWorldName : null;
+        if (_stop.World != here)
+        {
+            Stop(_visited.Count == 0
+                ? $"The first stop is {_stop.World}; travelling between worlds isn't part of the runner yet. Travel there, then run again."
+                : $"Done here. Next stop: {_stop.World} (travelling between worlds isn't part of the runner yet).");
+            return;
+        }
+
+        var number = plan.Stops.IndexOf(_stop) + 1;
+        Status = $"Stop {_visited.Count + 1}: {_stop.World}";
+        _log.Add($"{_stop.World}: {_stop.Purchases.Select(p => p.Item).Distinct().Count()} item(s), about {UiHelpers.Gil(_stop.Subtotal)} gil (stop {number} of {plan.Stops.Count} in the plan)");
+
+        if (UiHelpers.IsMarketboardOpen)
+        {
+            _phase = Phase.Buy;
+            return;
+        }
+
+        var config = SupermarketSweep.Config;
+        _walkStarted = false;
+        _walkEndedAt = null;
+        if (config.UseVnavPathing && VNavmesh_IPCSubscriber.IsEnabled && HubTerritories.Contains(Svc.ClientState.TerritoryType)
+            && !_manager.TaskManager.IsBusy)
+        {
+            _manager.QueueMoveToMarketboardTasks();
+            _walkStarted = true;
+        }
+
+        _phase = Phase.WaitBoard;
+        _deadline = now + TimeSpan.FromSeconds(_walkStarted ? 90 : 120);
+    }
+
+    private void WaitBoard(DateTime now)
+    {
+        var ready = MarketboardReader.GetReadyAddon("ItemSearch") != null;
+        Status = _walkStarted ? "Walking to the marketboard" : "Open the marketboard to continue";
+        if (ready)
+        {
+            _walkStarted = false;
+            _phase = Phase.Buy;
+            _notBefore = now + TimeSpan.FromSeconds(1); // let the board finish opening
+            return;
+        }
+
+        // The walk ends with opening the board; give the window a moment to appear after the queue empties.
+        if (_walkStarted && !_manager.TaskManager.IsBusy)
+        {
+            _walkEndedAt ??= now;
+            if (now - _walkEndedAt > TimeSpan.FromSeconds(5))
+                Stop("The walk to the marketboard ended without opening it. Open it and run again.", problem: true);
+            return;
+        }
+
+        if (now > _deadline)
+            Stop("Couldn't get to the marketboard. Open it and run again.", problem: true);
+    }
+
+    private void Buy(DateTime now)
+    {
+        var stop = _stop!;
+        var items = stop.Purchases.Select(p => p.Item).Distinct().ToList();
+        Status = $"Buying on {stop.World}";
+        if (!_manager.Buyer.Start(items, Plan, stop.World))
+        {
+            if (_manager.Buyer.LastOutcome == BuyOutcome.NothingToBuy)
+            {
+                _log.Add($"{stop.World}: nothing left to buy here.");
+                FinishWorld(now, []);
+                return;
+            }
+
+            Stop("Couldn't start buying (is Buy automation set to Outline only?).", problem: true);
+            return;
+        }
+
+        _phase = Phase.WaitBuy;
+    }
+
+    private void WaitBuy(DateTime now)
+    {
+        var buyer = _manager.Buyer;
+        if (buyer.IsRunning)
+        {
+            Status = $"{_stop!.World}: {buyer.Status}";
+            return;
+        }
+
+        _spent += buyer.Spent;
+        var stop = _stop!;
+        _log.Add($"{stop.World}: {buyer.LastResult}");
+        switch (buyer.LastOutcome)
+        {
+            case BuyOutcome.Done:
+            case BuyOutcome.NothingToBuy:
+                FinishWorld(now, stop.Purchases.Select(p => p.Item).Distinct().ToList());
+                return;
+            case BuyOutcome.OutOfGil:
+                Stop("Reached the gil reserve, so the run ends here.");
+                return;
+            case BuyOutcome.Stopped:
+                Stop("Buying was stopped, so the run ends here.");
+                return;
+            default:
+                Stop($"Buying on {stop.World} hit a problem, so the run ends here: {buyer.LastResult}", problem: true);
+                return;
+        }
+    }
+
+    /// <summary>Marks the world done and waits for owned counts of what was bought to catch up before replanning.</summary>
+    private void FinishWorld(DateTime now, List<ShoppingListItem> bought)
+    {
+        _visited.Add(_stop!.World);
+        _settleItems = bought;
+        _settleKey = string.Empty;
+        _settleChangedAt = now;
+        _deadline = now + TimeSpan.FromSeconds(10);
+        _phase = Phase.SettleCounts;
+    }
+
+    // Allagan Tools' counts lag behind purchases (and are cached for a second here), so wait until they stop
+    // changing for a moment, with a cap, before replanning from them.
+    private void SettleCounts(DateTime now)
+    {
+        Status = "Waiting for owned counts to update";
+        var key = string.Join(",", _settleItems.Select(i => i.StillNeeded));
+        if (key != _settleKey)
+        {
+            _settleKey = key;
+            _settleChangedAt = now;
+        }
+        else if (now - _settleChangedAt >= TimeSpan.FromSeconds(2.5) || now > _deadline)
+        {
+            _phase = Phase.PullPrices;
+            return;
+        }
+
+        _notBefore = now + TimeSpan.FromSeconds(1);
+    }
+
+    private static long Gil()
+    {
+        var inventory = InventoryManager.Instance();
+        return inventory == null ? 0 : inventory->GetGil();
+    }
+
+    private static void Chat(string message) => Svc.Chat.Print($"[Supermarket Sweep] {message}");
+
+    public void Dispose()
+    {
+        Svc.Framework.Update -= OnUpdate;
+        _phase = Phase.Idle;
+    }
+}

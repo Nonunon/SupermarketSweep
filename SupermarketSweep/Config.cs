@@ -42,6 +42,8 @@ public class Config
     public int AutoBuyStepDelayMs { get; set; } = 700;
     /// <summary>Automated buying stops before a purchase would leave less gil than this.</summary>
     public int AutoBuyGilReserve { get; set; } = 0;
+    /// <summary>Route run preflight: rough gil per stop for teleporting to a hub city on the way (world visits are free).</summary>
+    public int RouteTravelAllowancePerStop { get; set; } = 1000;
 
     // Debug
     /// <summary>Log addon callbacks while the marketboard is open (see <see cref="CallbackLogger"/>).</summary>

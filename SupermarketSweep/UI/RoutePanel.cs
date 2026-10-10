@@ -22,6 +22,7 @@ public class RoutePanel(SupermarketSweep manager)
     private Task<RoutePlan>? _planning;
     private string _planningFor = string.Empty;
     private bool _planFailed;
+    private readonly RunRoutePanel _runPanel = new(manager);
 
     /// <summary>The latest finished plan (null until one exists). Kept current by <see cref="UpdatePlan"/>.</summary>
     public RoutePlan? Plan => _plan;
@@ -38,6 +39,8 @@ public class RoutePanel(SupermarketSweep manager)
             ImGui.TextColored(ImGuiColors.DalamudRed, "Route planning hit an error (details in /xllog). It retries when anything changes.");
             ImGui.Spacing();
         }
+
+        _runPanel.Draw(_plan);
 
         if (_plan is null)
         {

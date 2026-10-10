@@ -45,6 +45,7 @@ public class SupermarketSweep : IDalamudPlugin
     public BuyAssistWindow BuyAssistWindow;
     private readonly CallbackLogger _callbackLogger;
     public MarketboardBuyer Buyer;
+    public RouteRunner Runner;
 
     /// <summary>Built on each use so a changed Lifestream timeout applies without a reload (at least 10 seconds).</summary>
     public TaskManagerConfiguration LifeStreamTaskConfig =>
@@ -67,6 +68,7 @@ public class SupermarketSweep : IDalamudPlugin
         LoadList();
         _callbackLogger = new CallbackLogger();
         Buyer = new MarketboardBuyer();
+        Runner = new RouteRunner(this);
         _OnItemAdded =
             Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>(
                 "AllaganTools.ItemAdded");
@@ -87,12 +89,14 @@ public class SupermarketSweep : IDalamudPlugin
         Svc.PluginInterface.UiBuilder.OpenConfigUi += OpenConfigUi;
     }
 
-    [Cmd("/shop", "Opens the shopping list UI. \"/shop stop\" stops automated buying.")]
+    [Cmd("/shop", "Opens the shopping list UI. \"/shop stop\" stops a route run or automated buying.")]
     public void OnCommand(string command, string args)
     {
         if (args.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase))
         {
-            if (Buyer.IsRunning)
+            if (Runner.IsRunning)
+                Runner.Stop("Stopped with /shop stop.");
+            else if (Buyer.IsRunning)
                 Buyer.Stop("Stopped with /shop stop.", BuyOutcome.Stopped);
             else
                 Svc.Chat.Print("[Supermarket Sweep] Not buying anything right now.");
@@ -282,6 +286,7 @@ public class SupermarketSweep : IDalamudPlugin
     {
         _OnItemAdded?.Unsubscribe(OnItemAdded);
         _callbackLogger.Dispose();
+        Runner.Dispose();
         Buyer.Dispose();
         Svc.PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         Svc.PluginInterface.UiBuilder.OpenMainUi -= OpenMainUi;

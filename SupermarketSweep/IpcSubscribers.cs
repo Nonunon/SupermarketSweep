@@ -163,7 +163,7 @@ namespace SupermarketSweep.IPC
     private static EzIPCDisposalToken[] _disposalTokens = EzIPC.Init(typeof(AllaganTools_IPCSubscriber), "AllaganTools");
 
     internal static bool IsEnabled
-        => IPCSubscriber_Common.IsReady("AllaganTools");
+        => IPCSubscriber_Common.IsReady("InventoryTools"); // Allagan Tools' internal plugin name
 
     [EzIPC("AllaganTools.InventoryCountByType", applyPrefix: false)]
     internal static readonly Func<uint, ulong?, uint> InventoryCountByType;

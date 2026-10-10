@@ -97,6 +97,14 @@ public class ConfigUi : Window
         if (ImGui.IsItemDeactivatedAfterEdit())
             EzConfig.Save();
         ImGuiEx.Tooltip("Gil reserve: automated buying stops before a purchase would leave you with less than this.\n0 = spend everything if needed.");
+
+        var travel = config.RouteTravelAllowancePerStop;
+        ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputInt("Travel allowance per stop (gil)", ref travel, 100, 1000))
+            config.RouteTravelAllowancePerStop = Math.Clamp(travel, 0, 1_000_000);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("Route runs only: a rough estimate of teleport costs per world, added to the route total in the check\nbefore a run. World visits from a hub aetheryte are free; getting to a hub first isn't.");
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")
