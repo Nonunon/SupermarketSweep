@@ -1,5 +1,7 @@
 # Supermarket Sweep
 
+[![AI-DECLARATION: copilot](https://img.shields.io/badge/%E4%B7%BC%20AI--DECLARATION-copilot-fee2e2?labelColor=fee2e2)](./AI-DECLARATION.md)
+
 A Final Fantasy XIV plugin (Dalamud) that turns the marketboard into a shopping list. Add what you need, pull prices from [Universalis](https://universalis.app), and let it plan which worlds to visit to buy everything cheaply, then travel you there.
 
 Open it with `/shop`.
