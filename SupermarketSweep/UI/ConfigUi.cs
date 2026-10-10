@@ -34,7 +34,7 @@ public class ConfigUi : Window
             SupermarketSweep.Config.LifeStreamTimeout = lifeStreamTimeout;
             EzConfig.Save();
         }
-        ImGuiEx.Tooltip("The amount of time in seconds before considering Lifestream to be stuck.");
+        ImGuiEx.Tooltip("The amount of time in seconds before considering Lifestream to be stuck (at least 10).\nApplies from the next travel on.");
 
         ImGui.Spacing();
         var buyAssist = SupermarketSweep.Config.BuyAssistEnabled;

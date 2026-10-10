@@ -46,7 +46,9 @@ public class SupermarketSweep : IDalamudPlugin
     private readonly CallbackLogger _callbackLogger;
     public MarketboardBuyer Buyer;
 
-    public TaskManagerConfiguration LifeStreamTaskConfig;
+    /// <summary>Built on each use so a changed Lifestream timeout applies without a reload (at least 10 seconds).</summary>
+    public TaskManagerConfiguration LifeStreamTaskConfig =>
+        new(timeLimitMS: Math.Max(10, Config.LifeStreamTimeout) * 1000, showDebug: showDebug);
 
     public TaskManagerConfiguration DefaultTaskConfig;
 
@@ -58,8 +60,6 @@ public class SupermarketSweep : IDalamudPlugin
         MarketableItems = AllItems.Where(i => i.ItemSearchCategory.RowId != 0).ToList();
         ItemSearch = new ItemSearch(AllItems);
 
-        LifeStreamTaskConfig = new TaskManagerConfiguration(
-            timeLimitMS: Config.LifeStreamTimeout * 1000, showDebug: showDebug);
         DefaultTaskConfig =
             new TaskManagerConfiguration(timeLimitMS: 40000, showDebug: showDebug);
 
@@ -70,9 +70,6 @@ public class SupermarketSweep : IDalamudPlugin
         _OnItemAdded =
             Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>(
                 "AllaganTools.ItemAdded");
-        _OnItemRemoved =
-            Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>(
-                "AllaganTools.ItemRemoved");
 
         _OnItemAdded.Subscribe(OnItemAdded);
 
@@ -116,7 +113,6 @@ public class SupermarketSweep : IDalamudPlugin
     }
 
     private static ICallGateSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>? _OnItemAdded;
-    private static ICallGateSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>? _OnItemRemoved;
 
     private void OnItemAdded((uint, InventoryItem.ItemFlags, ulong, uint) itemDetails)
     {
