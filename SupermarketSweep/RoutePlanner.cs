@@ -167,21 +167,59 @@ public static class RoutePlanner
         long ShortCost(Fill fill) => trips.Enabled ? (long)Math.Round(needs.Sum(n => Lost(fill, n) * shortValue[n.Item])) : 0;
 
         long Effective(Fill fill) => fill.Total + TripCost(fill) + ShortCost(fill);
-        bool Better(Fill a, Fill b) =>
-            a.Worlds.Count < b.Worlds.Count || (a.Worlds.Count == b.Worlds.Count && Effective(a) < Effective(b));
+        // Without trip costs: fewest worlds, then cheapest. With them, trips are already priced in (and "fewest worlds"
+        // first would prefer buying nothing at all), so the lowest weight wins, fewer worlds on a tie.
+        bool Better(Fill a, Fill b) => trips.Enabled
+            ? Effective(a) < Effective(b) || (Effective(a) == Effective(b) && a.Worlds.Count < b.Worlds.Count)
+            : a.Worlds.Count < b.Worlds.Count || (a.Worlds.Count == b.Worlds.Count && Effective(a) < Effective(b));
 
         // Ban one used world per round; its purchases can move to ANY world still allowed, including ones the
         // cheapest plan never touched. Keep the ban if it doesn't add worlds and either covers as much and fits the
         // budget, or (with trip costs) weighs less. The allowed set only shrinks, so this always ends.
+        //
+        // With trip costs, two more kinds of ban are tried each round, because a plain ban re-fills from the cheapest
+        // worlds left and tends to scatter the purchases over even more small stacks elsewhere (more worlds, so the
+        // ban is thrown out before trips are even weighed): a ban that only re-fills from worlds already on the
+        // route, and a ban of a whole data center (both ways).
         var allowedWorlds = needs.SelectMany(n => n.AllListings).Select(l => l.WorldName).ToHashSet();
         var current = cheapest;
         var bestSeen = cheapest;
         while (true)
         {
-            (Fill Fill, string Banned)? best = null;
+            // The world the player is on costs no trip, so the extra bans keep it available (otherwise "buy nothing"
+            // would compete with "buy it right here"), unless it's the one being banned.
+            var home = currentWorld?.World;
+            HashSet<string> KeepHome(IEnumerable<string> worlds, string? banned = null)
+            {
+                var set = worlds.ToHashSet();
+                if (home is not null && home != banned && allowedWorlds.Contains(home))
+                    set.Add(home);
+                return set;
+            }
+
+            var candidates = new List<HashSet<string>>();
             foreach (var world in current.Worlds)
             {
-                var allowed = allowedWorlds.Where(w => w != world).ToHashSet();
+                candidates.Add(allowedWorlds.Where(w => w != world).ToHashSet());
+                if (trips.Enabled)
+                    candidates.Add(KeepHome(current.Worlds.Where(w => w != world), world));
+            }
+
+            if (trips.Enabled)
+            {
+                foreach (var dc in current.Worlds.Select(DataCenter).Distinct().Where(dc => dc != currentWorld?.DataCenter).ToList())
+                {
+                    candidates.Add(allowedWorlds.Where(w => DataCenter(w) != dc).ToHashSet());
+                    candidates.Add(KeepHome(current.Worlds.Where(w => DataCenter(w) != dc)));
+                }
+            }
+
+            // A candidate must still drop something, or the loop wouldn't end.
+            candidates.RemoveAll(c => c.Count >= allowedWorlds.Count);
+
+            (Fill Fill, HashSet<string> Allowed)? best = null;
+            foreach (var allowed in candidates)
+            {
                 var trial = FillAll(needs, allowed, overbuy);
                 var losesUnits = needs.Any(n => Lost(trial, n) > 0);
                 if (trial.Worlds.Count > current.Worlds.Count
@@ -191,12 +229,12 @@ public static class RoutePlanner
                     || !((trial.Total <= budget && !losesUnits) || Effective(trial) < Effective(current)))
                     continue;
                 if (best is null || Better(trial, best.Value.Fill))
-                    best = (trial, world);
+                    best = (trial, allowed);
             }
 
             if (best is null)
                 break;
-            allowedWorlds.Remove(best.Value.Banned);
+            allowedWorlds = best.Value.Allowed;
             current = best.Value.Fill;
             if (Better(current, bestSeen))
                 bestSeen = current;
