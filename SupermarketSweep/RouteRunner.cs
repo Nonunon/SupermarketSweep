@@ -282,7 +282,10 @@ public sealed unsafe class RouteRunner : IDisposable
         var overbuy = OverbuyRule.FromConfig(config);
         var trips = TripCosts.FromConfig(config);
         (string, string)? here = Player.Available ? (Player.CurrentWorldName, Player.CurrentDataCenterName) : null;
-        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, trips, here));
+        // Worlds already done this run are left out: Universalis can still list what the board there didn't have
+        // (stale data), and planning on a world the run won't revisit would leave those units bought nowhere.
+        var visited = _visited.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, trips, here, visited));
         _phase = Phase.WaitPlan;
     }
 
@@ -433,11 +436,14 @@ public sealed unsafe class RouteRunner : IDisposable
             return;
         }
 
-        // Lifestream travel, then the walk to the board (queued by the travel itself once it lands).
+        // Lifestream travel, then the walk to the board (queued by the travel itself once it lands). A data center
+        // hop goes through the lobby (queues, "please wait" retries), so it gets the longer travel timeout.
+        var crossDc = _manager.IsOtherDataCenter(world);
         _manager.TravelToWorld(world);
         _move = Move.Travel;
         _phase = Phase.WaitBoard;
-        _deadline = now + TimeSpan.FromSeconds(Math.Max(10, SupermarketSweep.Config.LifeStreamTimeout) + 120);
+        _deadline = now + TimeSpan.FromSeconds(_manager.TravelTimeoutSeconds(crossDc) + 120);
+        AddLog($"Travelling to {world}" + (crossDc ? " (another data center)" : ""));
     }
 
     private void WaitBoard(DateTime now)

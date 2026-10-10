@@ -126,15 +126,17 @@ public static class RoutePlanner
     /// thread, since owned counts come from Allagan Tools IPC; the planning itself is safe to run off-thread.</param>
     /// <param name="currentWorld">Where the player is now (null if unknown), used to order the stops. Also read by the
     /// caller on the framework thread: Dalamud only allows touching the local player there.</param>
+    /// <param name="excludedWorlds">Worlds whose listings to ignore (a route run's worlds already visited: what's
+    /// left there is what the board didn't have, whatever Universalis still says).</param>
     public static RoutePlan Plan(IReadOnlyList<(ShoppingListItem Item, long StillNeeded)> wanted,
         float maxExtraPercent, OverbuyRule overbuy, TripCosts trips = default,
-        (string World, string DataCenter)? currentWorld = null)
+        (string World, string DataCenter)? currentWorld = null, IReadOnlySet<string>? excludedWorlds = null)
     {
         var buying = wanted.Where(w => w.Item.IsMarketable && w.StillNeeded > 0).ToList();
         var needsPrices = buying.Where(w => w.Item.MarketDataResponse is null || !w.Item.PricesMatchCurrentScope)
             .Select(w => w.Item).ToList();
         var needs = buying.Where(w => !needsPrices.Contains(w.Item))
-            .Select(w => new Need(w.Item, w.StillNeeded, BuildTiers(w.Item)))
+            .Select(w => new Need(w.Item, w.StillNeeded, BuildTiers(w.Item, excludedWorlds)))
             .ToList();
 
         var cheapest = FillAll(needs, null, overbuy);
@@ -273,10 +275,11 @@ public static class RoutePlanner
         return new Fill(bought, total);
     }
 
-    private static List<List<MarketDataListing>> BuildTiers(ShoppingListItem item)
+    private static List<List<MarketDataListing>> BuildTiers(ShoppingListItem item, IReadOnlySet<string>? excludedWorlds)
     {
         var usable = item.MarketDataResponse!.Listings
-            .Where(l => l.Quantity > 0 && !string.IsNullOrEmpty(l.WorldName))
+            .Where(l => l.Quantity > 0 && !string.IsNullOrEmpty(l.WorldName)
+                        && (excludedWorlds is null || !excludedWorlds.Contains(l.WorldName)))
             .OrderBy(l => (double)l.Cost / l.Quantity)
             .ToList();
         return item.EffectiveQuality switch

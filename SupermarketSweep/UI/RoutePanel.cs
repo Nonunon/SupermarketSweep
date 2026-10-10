@@ -24,8 +24,11 @@ public class RoutePanel(SupermarketSweep manager)
     private bool _planFailed;
     private readonly RunRoutePanel _runPanel = new(manager);
 
-    /// <summary>The latest finished plan (null until one exists). Kept current by <see cref="UpdatePlan"/>.</summary>
-    public RoutePlan? Plan => _plan;
+    /// <summary>
+    /// The plan to show and buy from: the route run's own plan while one is going (it leaves out worlds already
+    /// visited), else the latest finished one here (null until one exists; kept current by <see cref="UpdatePlan"/>).
+    /// </summary>
+    public RoutePlan? Plan => manager.Runner is { IsRunning: true, Plan: { } running } ? running : _plan;
 
     public void Draw()
     {
@@ -42,27 +45,30 @@ public class RoutePanel(SupermarketSweep manager)
 
         _runPanel.Draw(_plan);
 
-        if (_plan is null)
+        // While a route run goes, show the plan it follows.
+        var plan = Plan;
+
+        if (plan is null)
         {
             if (!_planFailed)
                 ImGui.TextDisabled("Planning...");
             return;
         }
 
-        if (_planning is not null)
+        if (_planning is not null && plan == _plan)
         {
             ImGui.TextDisabled("Updating...");
             ImGui.SameLine();
         }
 
-        DrawNeedsPrices(_plan);
-        DrawSummary(_plan);
-        DrawUnfilled(_plan);
+        DrawNeedsPrices(plan);
+        DrawSummary(plan);
+        DrawUnfilled(plan);
         ImGui.Spacing();
 
         using var child = ImRaii.Child("RouteStops");
         var number = 1;
-        foreach (var stop in _plan.Stops)
+        foreach (var stop in plan.Stops)
             DrawStop(stop, number++);
     }
 
@@ -252,8 +258,8 @@ public class RoutePanel(SupermarketSweep manager)
             if (notWorth > 0)
             {
                 ImGui.TextColored(ImGuiColors.DalamudYellow, notWorth >= missing
-                    ? $"{item.Name}: {missing} short (only sold on far worlds; not worth the trip)."
-                    : $"{item.Name}: {missing} short ({notWorth} of them only on far worlds; not worth the trip).");
+                    ? $"{item.Name}: {missing} short (only on other worlds, too little to be worth the trip)."
+                    : $"{item.Name}: {missing} short ({notWorth} of them only on other worlds, too little to be worth the trip).");
                 ImGuiEx.Tooltip("The rest is listed on worlds the route skips, because going there for this little isn't worth the trip.\n" +
                                 "Buy it on a later run, or pick it up on that world if you're going anyway.");
                 continue;

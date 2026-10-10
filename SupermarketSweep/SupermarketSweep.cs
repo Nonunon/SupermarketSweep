@@ -8,6 +8,7 @@ using ECommons.Automation;
 using ECommons.Automation.NeoTaskManager;
 using ECommons.Commands;
 using ECommons.Configuration;
+using ECommons.ExcelServices;
 using ECommons.DalamudServices;
 using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -167,11 +168,26 @@ public class SupermarketSweep : IDalamudPlugin
             return;
         }
 
+        // A data center hop goes through the lobby (queues, "please wait" retries seen in-game), so it gets longer.
+        var travelConfig = new TaskManagerConfiguration(timeLimitMS: TravelTimeoutSeconds(IsOtherDataCenter(worldName)) * 1000,
+            showDebug: showDebug);
         TaskManager.Enqueue(() => Lifestream_IPCSubscriber.ExecuteCommand(worldName), LifeStreamTaskConfig);
-        TaskManager.Enqueue(() => !Lifestream_IPCSubscriber.IsBusy(), LifeStreamTaskConfig);
+        TaskManager.Enqueue(() => !Lifestream_IPCSubscriber.IsBusy(), travelConfig);
         TaskManager.Enqueue(GenericHelpers.IsScreenReady);
         TaskManager.Enqueue(QueueMoveToMarketboardTasks);
     }
+
+    /// <summary>True if <paramref name="worldName"/> is on another data center than the player's. Framework thread.</summary>
+    public bool IsOtherDataCenter(string worldName)
+    {
+        var dc = ExcelWorldHelper.Get(worldName)?.DataCenter.ValueNullable?.Name.ToString();
+        var here = Player.Available ? Player.CurrentDataCenterName : null;
+        return dc is not null && here is not null && dc != here;
+    }
+
+    /// <summary>The Lifestream timeout setting (at least 10 s), tripled for a data center hop.</summary>
+    public int TravelTimeoutSeconds(bool otherDataCenter) =>
+        Math.Max(10, Config.LifeStreamTimeout) * (otherDataCenter ? 3 : 1);
 
     /// <summary>
     /// Teleports to Limsa Lominsa (through Lifestream), then walks to the marketboard: for starting a route run on
