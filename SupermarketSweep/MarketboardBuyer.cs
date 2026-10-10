@@ -148,10 +148,11 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         _current = null;
         LastResult = $"{reason} Bought {_listingsBought} listing(s) for {UiHelpers.Gil(_spent)} gil.";
         LastOutcome = outcome;
+        Svc.Log.Information($"Buying ended ({outcome}): {LastResult}");
         if (outcome == BuyOutcome.Problem)
             Svc.Chat.PrintError($"[Supermarket Sweep] {LastResult}");
         else
-            Chat(LastResult);
+            Svc.Chat.Print($"[Supermarket Sweep] {LastResult}");
     }
 
     private void OnUpdate(IFramework framework)
@@ -621,7 +622,12 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         return inventory == null ? 0 : inventory->GetGil();
     }
 
-    private static void Chat(string message) => Svc.Chat.Print($"[Supermarket Sweep] {message}");
+    // Chat lines also go to the Dalamud log, so a run can be followed afterwards in /xllog or dalamud.log.
+    private static void Chat(string message)
+    {
+        Svc.Chat.Print($"[Supermarket Sweep] {message}");
+        Svc.Log.Information(message);
+    }
 
     public void Dispose()
     {

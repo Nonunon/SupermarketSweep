@@ -57,6 +57,7 @@ public sealed unsafe class RouteRunner : IDisposable
     private readonly HashSet<string> _visited = [];
     private readonly List<string> _log = [];
     private Phase _phase;
+    private Phase _loggedPhase;
     private DateTime _notBefore;
     private DateTime _deadline;
     private Task<RoutePlan>? _planning;
@@ -90,7 +91,14 @@ public sealed unsafe class RouteRunner : IDisposable
     /// </summary>
     public HashSet<string> SkippedWorlds { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public bool IsSkipped(WorldStop stop) => SupermarketSweep.Config.RouteRunPickStops && SkippedWorlds.Contains(stop.World);
+    public bool IsSkipped(WorldStop stop) =>
+        SupermarketSweep.Config.RouteRunPickStops && (SkippedWorlds.Contains(stop.World) || (_pickedAtStart is { } picked && !picked.Contains(stop.World)));
+
+    /// <summary>
+    /// With picking on, the worlds ticked when Start was pressed. A replan can bring in worlds that weren't on the
+    /// route then; those were never ticked, so the run leaves them out too.
+    /// </summary>
+    private HashSet<string>? _pickedAtStart;
 
     /// <summary>The plan without skipped stops, for the preflight and the checks before a run.</summary>
     private RoutePlan Picked(RoutePlan plan) => new()
@@ -127,6 +135,7 @@ public sealed unsafe class RouteRunner : IDisposable
         _log.Clear();
         _spent = 0;
         _confirmed = false;
+        _pickedAtStart = null;
         _stop = null;
         Preflight = null;
         Plan = null;
@@ -140,6 +149,9 @@ public sealed unsafe class RouteRunner : IDisposable
         if (_phase != Phase.Confirm || Preflight is not { CanStart: true })
             return;
         _confirmed = true;
+        _pickedAtStart = SupermarketSweep.Config.RouteRunPickStops
+            ? Picked(Plan!).Stops.Select(s => s.World).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : null;
         Chat("Running the route. Stop with the Stop button or /shop stop.");
         _phase = Phase.PickStop;
     }
@@ -172,10 +184,12 @@ public sealed unsafe class RouteRunner : IDisposable
         LastResult = wasConfirmed ? $"{reason} Spent {UiHelpers.Gil(_spent)} gil." : reason;
         if (!wasConfirmed)
             return; // cancelled at the preflight: nothing happened worth a chat line
+        Svc.Log.Information($"Route run ended: {LastResult}");
+        _loggedPhase = Phase.Idle;
         if (problem)
             Svc.Chat.PrintError($"[Supermarket Sweep] {LastResult}");
         else
-            Chat(LastResult);
+            Svc.Chat.Print($"[Supermarket Sweep] {LastResult}");
     }
 
     private void OnUpdate(IFramework framework)
@@ -195,6 +209,12 @@ public sealed unsafe class RouteRunner : IDisposable
 
     private void Tick(DateTime now)
     {
+        if (_phase != _loggedPhase)
+        {
+            Svc.Log.Information($"Route run: {_loggedPhase} -> {_phase}" + (_stop is null ? "" : $" ({_stop.World})"));
+            _loggedPhase = _phase;
+        }
+
         switch (_phase)
         {
             case Phase.PullPrices:
@@ -335,7 +355,7 @@ public sealed unsafe class RouteRunner : IDisposable
 
         var number = plan.Stops.IndexOf(_stop) + 1;
         Status = $"Stop {_visited.Count + 1}: {_stop.World}";
-        _log.Add($"{_stop.World}: {_stop.Purchases.Select(p => p.Item).Distinct().Count()} item(s), about {UiHelpers.Gil(_stop.Subtotal)} gil (stop {number} of {plan.Stops.Count} in the plan)");
+        AddLog($"{_stop.World}: {_stop.Purchases.Select(p => p.Item).Distinct().Count()} item(s), about {UiHelpers.Gil(_stop.Subtotal)} gil (stop {number} of {plan.Stops.Count} in the plan)");
 
         var here = Player.Available ? Player.CurrentWorldName : null;
         _move = Move.None;
@@ -474,7 +494,7 @@ public sealed unsafe class RouteRunner : IDisposable
         {
             if (_manager.Buyer.LastOutcome == BuyOutcome.NothingToBuy)
             {
-                _log.Add($"{stop.World}: nothing left to buy here.");
+                AddLog($"{stop.World}: nothing left to buy here.");
                 FinishWorld(now, []);
                 return;
             }
@@ -497,7 +517,7 @@ public sealed unsafe class RouteRunner : IDisposable
 
         _spent += buyer.Spent;
         var stop = _stop!;
-        _log.Add($"{stop.World}: {buyer.LastResult}");
+        AddLog($"{stop.World}: {buyer.LastResult}");
         switch (buyer.LastOutcome)
         {
             case BuyOutcome.Done:
@@ -553,7 +573,18 @@ public sealed unsafe class RouteRunner : IDisposable
         return inventory == null ? 0 : inventory->GetGil();
     }
 
-    private static void Chat(string message) => Svc.Chat.Print($"[Supermarket Sweep] {message}");
+    // Chat lines also go to the Dalamud log, so a run can be followed afterwards in /xllog or dalamud.log.
+    private static void Chat(string message)
+    {
+        Svc.Chat.Print($"[Supermarket Sweep] {message}");
+        Svc.Log.Information(message);
+    }
+
+    private void AddLog(string line)
+    {
+        _log.Add(line);
+        Svc.Log.Information($"Route run: {line}");
+    }
 
     public void Dispose()
     {
