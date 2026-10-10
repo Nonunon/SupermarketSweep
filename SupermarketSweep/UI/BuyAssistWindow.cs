@@ -117,13 +117,14 @@ public class BuyAssistWindow : Window
         var opportunity = config.BuyAssistOpportunistic ? new Opportunity(elsewhereListings) : null;
         static string Signature(IEnumerable<MarketDataListing> listings) =>
             string.Join(",", listings.Select(l => $"{l.PricePerUnit}x{l.Quantity}{l.Hq}"));
-        var key = $"{read.ItemId}|{item.EffectiveQuality}|{target}|{caps}|{config.RouteAllowOverbuy}|" +
+        var maxExcess = OverbuyRule.FromConfig(config).MaxExcess(target);
+        var key = $"{read.ItemId}|{item.EffectiveQuality}|{target}|{caps}|{maxExcess}|" +
                   $"{Signature(plannedHere)}|{config.BuyAssistOpportunistic}:{Signature(elsewhereListings)}|" +
                   string.Join(",", read.Listings);
         if (key != _adviceKey || _advice is null)
         {
             _advice = BuyAdvisor.Advise(read.Listings, item.EffectiveQuality, target, caps, plannedHere,
-                config.RouteAllowOverbuy, opportunity);
+                maxExcess, opportunity);
             _adviceKey = key;
         }
 

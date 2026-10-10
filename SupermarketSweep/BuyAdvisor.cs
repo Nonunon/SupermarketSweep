@@ -22,7 +22,7 @@ public enum ListingVerdict
     TooExpensive,
     WrongQuality,
 
-    /// <summary>Bigger than what's still needed, and overbuying is off.</summary>
+    /// <summary>Bigger than what's still needed by more than the overbuy allowance.</summary>
     TooBig,
 
     /// <summary>One of your own retainers.</summary>
@@ -52,7 +52,7 @@ public record Opportunity(IReadOnlyList<MarketDataListing> PlannedElsewhere, lon
 /// <summary>
 /// Decides which live listings to buy for one item: the Universalis-based route is only a guide, the board is the truth.
 /// A listing qualifies if its quality fits the item's rule, its unit price is within <c>maxOverPercent</c> of what the
-/// route planned to pay, and (without overbuy) it isn't bigger than what's still needed. The route's own listings first
+/// route planned to pay, and it isn't bigger than what's still needed by more than the overbuy allowance. The route's own listings first
 /// and a plain cheapest fill are compared, and the better one is recommended. With an <see cref="Opportunity"/>, listings
 /// that beat what the route pays on other worlds are recommended on top, as extras.
 /// </summary>
@@ -109,9 +109,11 @@ public static class BuyAdvisor
 
     /// <param name="stillNeeded">How many to buy here: the route's amount for this world, capped by what's needed.</param>
     /// <param name="plannedHere">The route's listings for this item on this world (<see cref="PlannedHere"/>).</param>
+    /// <param name="maxExcess">How many units past what's needed a purchase may bring
+    /// (<see cref="OverbuyRule.MaxExcess"/>; 0 = only stacks that fit).</param>
     /// <param name="opportunity">If given, also recommend extras that beat what the route pays on other worlds.</param>
     public static BuyAdvice Advise(IReadOnlyList<LiveListing> live, QualityPreference quality, long stillNeeded,
-        PriceCaps? caps, IReadOnlyList<MarketDataListing> plannedHere, bool allowOverbuy, Opportunity? opportunity = null)
+        PriceCaps? caps, IReadOnlyList<MarketDataListing> plannedHere, long maxExcess, Opportunity? opportunity = null)
     {
         var verdicts = new ListingVerdict[live.Count];
         var index = new Dictionary<MarketDataListing, int>();
@@ -124,7 +126,7 @@ public static class BuyAdvisor
                 : quality == QualityPreference.HqOnly && !listing.Hq ? ListingVerdict.WrongQuality
                 : cap is null ? ListingVerdict.WrongQuality
                 : listing.UnitCost > cap.Value + 1e-6 ? ListingVerdict.TooExpensive
-                : !allowOverbuy && stillNeeded > 0 && listing.Quantity > stillNeeded ? ListingVerdict.TooBig
+                : stillNeeded > 0 && listing.Quantity - stillNeeded > maxExcess ? ListingVerdict.TooBig
                 : ListingVerdict.Fine;
 
             if (verdicts[i] == ListingVerdict.Fine)
@@ -135,8 +137,8 @@ public static class BuyAdvisor
         // that, e.g. a cheap extra HQ crowding out a planned NQ stack), and a plain cheapest fill (Universalis is
         // crowdsourced, so the board can have cheaper listings the route never saw). Keep the better one.
         var acceptable = index.Keys.ToList();
-        var routeFirst = Select(acceptable, plannedHere, quality, stillNeeded, allowOverbuy);
-        var cheapest = Select(acceptable, [], quality, stillNeeded, allowOverbuy);
+        var routeFirst = Select(acceptable, plannedHere, quality, stillNeeded, maxExcess);
+        var cheapest = Select(acceptable, [], quality, stillNeeded, maxExcess);
         // Units left short have to be bought elsewhere; value them at the most we'd pay per unit here.
         var shortPenalty = Math.Max(caps?.Hq ?? 0, caps?.Nq ?? 0);
         var chosen = Better(cheapest, routeFirst, stillNeeded, quality, shortPenalty);
@@ -157,6 +159,8 @@ public static class BuyAdvisor
         var baseQuantity = chosen.Sum(l => l.Quantity);
         var extra = new bool[live.Count];
         long extraQuantity = 0, extraCost = 0, extraSaving = 0;
+        // Whatever overbuy allowance the main picks didn't use is left for the extras.
+        var extraSlack = Math.Max(0, maxExcess - Math.Max(0, baseQuantity - stillNeeded));
         if (opportunity is not null)
         {
             // Cheapest first, each whole stack paired with the dearest units it would replace elsewhere, and kept only
@@ -175,13 +179,14 @@ public static class BuyAdvisor
                 var nqOnly = quality != QualityPreference.Any && !listing.Hq;
                 var available = replaceable.Available(nqOnly);
                 var units = Math.Min(listing.Quantity, available);
-                if (units <= 0 || (!allowOverbuy && listing.Quantity > available))
+                if (units <= 0 || listing.Quantity - available > extraSlack)
                     continue;
                 var replacedCost = replaceable.Peek(units, nqOnly);
                 if (listing.Cost >= replacedCost)
                     continue;
 
                 replaceable.Consume(units, nqOnly);
+                extraSlack -= listing.Quantity - units;
                 verdicts[i] = ListingVerdict.Buy;
                 extra[i] = true;
                 extraQuantity += listing.Quantity;
@@ -242,19 +247,19 @@ public static class BuyAdvisor
 
     /// <summary>
     /// Fills <paramref name="need"/> from <paramref name="acceptable"/>: the <paramref name="planned"/> listings first
-    /// where they're on the board, then the rest tier by tier like the planner. Without overbuy that's an exact fill:
-    /// the planner's greedy pass can take a cheap small stack that leaves a bigger one no longer fitting, and here
-    /// (one item, one world) the exact answer is cheap enough.
+    /// where they're on the board, then the rest tier by tier like the planner. Unless overbuying is unlimited that's an
+    /// exact fill: the planner's greedy pass can take a cheap small stack that leaves a bigger one no longer fitting,
+    /// and here (one item, one world) the exact answer is cheap enough.
     /// </summary>
     private static List<MarketDataListing> Select(List<MarketDataListing> acceptable,
-        IReadOnlyList<MarketDataListing> planned, QualityPreference quality, long need, bool allowOverbuy)
+        IReadOnlyList<MarketDataListing> planned, QualityPreference quality, long need, long maxExcess)
     {
         var pool = acceptable.ToList();
         var taken = new List<MarketDataListing>();
         long quantity = 0;
         foreach (var plannedListing in planned)
         {
-            if (quantity >= need || (!allowOverbuy && plannedListing.Quantity > need - quantity))
+            if (quantity >= need || plannedListing.Quantity - (need - quantity) > maxExcess)
                 continue;
             var match = pool.FirstOrDefault(l => SameListing(l, plannedListing));
             if (match is null)
@@ -273,9 +278,9 @@ public static class BuyAdvisor
             var remaining = need - quantity;
             if (remaining <= 0)
                 break;
-            var picks = allowOverbuy || remaining > MaxExactFill
-                ? RoutePlanner.FillFromTier(tier, remaining, null, allowOverbuy)
-                : FillExact(tier, (int)remaining);
+            var picks = maxExcess > MaxExactFill || remaining + maxExcess > MaxExactFill
+                ? RoutePlanner.FillFromTier(tier, remaining, null, maxExcess)
+                : FillExact(tier, (int)remaining, (int)maxExcess);
             taken.AddRange(picks);
             quantity += picks.Sum(l => l.Quantity);
         }
@@ -306,21 +311,23 @@ public static class BuyAdvisor
     private const int MaxExactFill = 20000;
 
     /// <summary>
-    /// The whole listings, none bigger than needed, that cover as much of <paramref name="need"/> as possible, and
-    /// of those the cheapest combination (0/1 knapsack over quantity).
+    /// The cheapest whole listings that bring between <paramref name="need"/> and <paramref name="need"/> +
+    /// <paramref name="maxExcess"/> units; if no combination reaches <paramref name="need"/>, the cheapest of those
+    /// covering as much of it as possible (0/1 knapsack over quantity).
     /// </summary>
-    private static List<MarketDataListing> FillExact(List<MarketDataListing> tier, int need)
+    private static List<MarketDataListing> FillExact(List<MarketDataListing> tier, int need, int maxExcess)
     {
         // cheapest[q] = lowest cost to buy exactly q; took[i, q] = listing i was part of the best way to reach q
         // when it was considered. Walking the listings backwards then recovers the combination.
-        var cheapest = new long[need + 1];
+        var limit = need + maxExcess;
+        var cheapest = new long[limit + 1];
         Array.Fill(cheapest, long.MaxValue);
         cheapest[0] = 0;
-        var took = new bool[tier.Count, need + 1];
+        var took = new bool[tier.Count, limit + 1];
         for (var i = 0; i < tier.Count; i++)
         {
-            var size = (int)Math.Min(tier[i].Quantity, need + 1L);
-            for (var q = need; q >= size; q--)
+            var size = (int)Math.Min(tier[i].Quantity, limit + 1L);
+            for (var q = limit; q >= size; q--)
             {
                 if (cheapest[q - size] == long.MaxValue || cheapest[q - size] + tier[i].Cost >= cheapest[q])
                     continue;
@@ -329,9 +336,17 @@ public static class BuyAdvisor
             }
         }
 
-        var reached = need;
-        while (cheapest[reached] == long.MaxValue)
-            reached--;
+        // Cheapest total that covers the need (least excess on a tie), else the most that can be covered.
+        var reached = -1;
+        for (var q = need; q <= limit; q++)
+            if (cheapest[q] != long.MaxValue && (reached < 0 || cheapest[q] < cheapest[reached]))
+                reached = q;
+        if (reached < 0)
+        {
+            reached = need;
+            while (cheapest[reached] == long.MaxValue)
+                reached--;
+        }
 
         var picks = new List<MarketDataListing>();
         for (var i = tier.Count - 1; i >= 0 && reached > 0; i--)

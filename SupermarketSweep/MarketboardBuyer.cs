@@ -321,8 +321,11 @@ public sealed unsafe class MarketboardBuyer : IDisposable
 
         var config = SupermarketSweep.Config;
         var opportunity = run.Elsewhere is null ? null : new Opportunity(run.Elsewhere, run.Extra);
+        // The overbuy allowance is worked out from the frozen target, not what's left of it, so the last stack of a
+        // big order still gets the room a percentage gives.
+        var maxExcess = OverbuyRule.FromConfig(config).MaxExcess(run.Target);
         var advice = BuyAdvisor.Advise(read.Listings, run.Item.EffectiveQuality, run.Remaining, run.Caps, run.Planned,
-            config.RouteAllowOverbuy, opportunity);
+            maxExcess, opportunity);
         var index = Array.IndexOf(advice.Verdicts, ListingVerdict.Buy);
         if (index < 0)
         {

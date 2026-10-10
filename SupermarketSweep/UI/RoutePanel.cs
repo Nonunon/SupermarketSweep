@@ -83,7 +83,7 @@ public class RoutePanel(SupermarketSweep manager)
             EzConfig.Save();
         }
 
-        ImGuiEx.Tooltip("Allow buying a stack bigger than you need (say 10 when you need 3) when that's cheaper.\nOff: only stacks that fit, which can leave an item short.");
+        ImGuiEx.Tooltip("Allow buying a stack of any size bigger than you need (say 99 when you need 3) when that's cheaper.\nOff: only stacks within the overbuy allowance below.");
 
         ImGui.SameLine();
         var oceania = config.RouteIncludeOceania;
@@ -106,6 +106,46 @@ public class RoutePanel(SupermarketSweep manager)
         }
 
         ImGuiEx.Tooltip("HQ rule for items that don't set their own (Item tab).");
+
+        ImGui.SameLine();
+        DrawOverbuyAllowance();
+    }
+
+    private static void DrawOverbuyAllowance()
+    {
+        var config = SupermarketSweep.Config;
+        using var disabled = ImRaii.Disabled(config.RouteAllowOverbuy);
+        const string tooltip = "Lets the last stack of an item go a little past what you need, so 897/900 can finish with a\n" +
+                               "small stack instead of stopping short. Allowed if the extra is within either limit.\n" +
+                               "0% and 0 units = only stacks that fit. Not used while \"Allow overbuying\" is on (no limit then).";
+
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text("Overbuy up to");
+        ImGuiEx.Tooltip(tooltip);
+
+        ImGui.SameLine();
+        var percent = config.RouteOverbuyMaxPercent;
+        ImGui.SetNextItemWidth(55 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputFloat("##overbuyPercent", ref percent, 0, 0, "%.0f%%"))
+            config.RouteOverbuyMaxPercent = Math.Clamp(percent, 0, 100);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip(tooltip);
+
+        ImGui.SameLine();
+        ImGui.Text("or");
+        ImGui.SameLine();
+        var units = config.RouteOverbuyMaxUnits;
+        ImGui.SetNextItemWidth(55 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputInt("##overbuyUnits", ref units, 0, 0))
+            config.RouteOverbuyMaxUnits = Math.Max(0, units);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip(tooltip);
+
+        ImGui.SameLine();
+        ImGui.Text("units");
+        ImGuiEx.Tooltip(tooltip);
     }
 
     /// <summary>Re-plans in the background if anything changed. Cheap when nothing did; call from the framework thread.</summary>
@@ -131,7 +171,7 @@ public class RoutePanel(SupermarketSweep manager)
 
         var config = SupermarketSweep.Config;
         var extra = config.RouteMaxExtraPercent;
-        var overbuy = config.RouteAllowOverbuy;
+        var overbuy = OverbuyRule.FromConfig(config);
         _planningFor = key;
         (string, string)? here = Player.Available ? (Player.CurrentWorldName, Player.CurrentDataCenterName) : null;
         _planning = Task.Run(() => RoutePlanner.Plan(wanted, extra, overbuy, here));
@@ -141,7 +181,7 @@ public class RoutePanel(SupermarketSweep manager)
     {
         var config = SupermarketSweep.Config;
         var sb = new StringBuilder();
-        sb.Append($"{config.RouteMaxExtraPercent:0}|{config.RouteAllowOverbuy}|{config.ShoppingRegion}|{config.RouteIncludeOceania}|{config.RouteDefaultQuality}");
+        sb.Append($"{config.RouteMaxExtraPercent:0}|{OverbuyRule.FromConfig(config)}|{config.ShoppingRegion}|{config.RouteIncludeOceania}|{config.RouteDefaultQuality}");
         foreach (var (item, still) in wanted)
             sb.Append($"|{item.ItemId}:{still}:{item.MarketDataFetchedAt?.Ticks}:{item.IsFetchingData}:{item.Quality}");
         return sb.ToString();
@@ -191,7 +231,8 @@ public class RoutePanel(SupermarketSweep manager)
                 ? item.EffectiveQuality == QualityPreference.HqOnly
                     ? "Not enough HQ listings in the region (this item is set to HQ only)."
                     : "Not enough listings in the region."
-                : "Not enough listings, or only stacks bigger than what's left. Allow overbuying to use those.");
+                : "Not enough listings, or only stacks bigger than what's left by more than the overbuy allowance.\n" +
+                  "Raise the allowance or allow overbuying to use those.");
         }
     }
 
