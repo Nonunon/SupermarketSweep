@@ -46,7 +46,21 @@ public class RunRoutePanel(SupermarketSweep manager)
             ImGui.SameLine();
             ImGui.TextDisabled($"Last run: {result}");
             DrawLog(runner);
+            DrawLeftShort(runner);
         }
+    }
+
+    private static void DrawLeftShort(RouteRunner runner)
+    {
+        if (runner.LeftShort.Count == 0)
+            return;
+
+        ImGui.TextColored(ImGuiColors.DalamudYellow, $"Left short after the run ({runner.LeftShort.Count} item(s)):");
+        ImGuiEx.Tooltip("What was still needed when the run ended, and why. If the run was stopped mid-buy, owned counts\n" +
+                        "may lag a purchase or two behind; the list on the left catches up within seconds.");
+        using var indent = ImRaii.PushIndent();
+        foreach (var (item, units, reason) in runner.LeftShort)
+            ImGui.TextColored(ImGuiColors.DalamudYellow, $"{item.Name}: {units} ({reason})");
     }
 
     private static void DrawPreflight(RouteRunner runner, PreflightResult preflight)

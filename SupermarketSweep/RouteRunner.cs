@@ -133,6 +133,7 @@ public sealed unsafe class RouteRunner : IDisposable
             return;
         _visited.Clear();
         _log.Clear();
+        LeftShort = [];
         _spent = 0;
         _confirmed = false;
         _pickedAtStart = null;
@@ -182,14 +183,46 @@ public sealed unsafe class RouteRunner : IDisposable
         _move = Move.None;
 
         LastResult = wasConfirmed ? $"{reason} Spent {UiHelpers.Gil(_spent)} gil." : reason;
+        _loggedPhase = Phase.Idle;
         if (!wasConfirmed)
             return; // cancelled at the preflight: nothing happened worth a chat line
         Svc.Log.Information($"Route run ended: {LastResult}");
-        _loggedPhase = Phase.Idle;
         if (problem)
             Svc.Chat.PrintError($"[Supermarket Sweep] {LastResult}");
         else
             Svc.Chat.Print($"[Supermarket Sweep] {LastResult}");
+
+        LeftShort = BuildLeftShort();
+        if (LeftShort.Count > 0)
+            Chat($"Left short: {string.Join("; ", LeftShort.Select(s => $"{s.Item.Name} {s.Units} ({s.Reason})"))}.");
+    }
+
+    /// <summary>What the last run left short, item by item with the reason (empty if everything's covered).</summary>
+    public IReadOnlyList<(ShoppingListItem Item, long Units, string Reason)> LeftShort { get; private set; } = [];
+
+    // Everything still needed when the run ends, with the reason from the run's last plan. Owned counts can lag a
+    // purchase or two when the run was stopped mid-buy (they settle within seconds); the list is a snapshot.
+    private List<(ShoppingListItem Item, long Units, string Reason)> BuildLeftShort()
+    {
+        var plan = Plan;
+        var result = new List<(ShoppingListItem, long, string)>();
+        foreach (var item in _manager.WantedItems.Where(i => i.IsMarketable))
+        {
+            var units = item.StillNeeded;
+            if (units <= 0)
+                continue;
+
+            var plannedOn = plan?.Stops.Where(s => s.Purchases.Any(p => p.Item == item)).Select(s => s.World).ToList() ?? [];
+            var reason = plan is null ? "no plan"
+                : plan.NeedsPrices.Contains(item) ? "no prices"
+                : plannedOn.Count > 0 ? $"still planned on {string.Join(", ", plannedOn)}"
+                : plan.NotWorthTheTrip.Any(n => n.Item == item) ? "only on other worlds, too little to be worth the trip"
+                : plan.Unfilled.Any(u => u.Item == item) ? "not enough listings"
+                : "nothing fit the price and quality rules";
+            result.Add((item, units, reason));
+        }
+
+        return result;
     }
 
     private void OnUpdate(IFramework framework)
