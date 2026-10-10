@@ -1,4 +1,6 @@
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
+using ECommons.Automation;
 using ECommons.DalamudServices;
 using ECommons.GameHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -12,13 +14,14 @@ namespace SupermarketSweep;
 /// Runs the route by itself ("Run route" on the Route tab). A step machine on Framework.Update, like
 /// <see cref="MarketboardBuyer"/>, which it reuses for the buying at each world:
 ///
-/// pull prices → replan → preflight (the player presses Start) → pick the next unvisited stop → make sure the
-/// marketboard is open (walk there if needed) → buy that world's stop → wait for owned counts to catch up → pull
-/// prices → replan → next stop.
+/// pull prices → replan → preflight (the player presses Start) → pick the next unvisited stop → on another world:
+/// close the board, travel (Lifestream) and walk to the board; on this one: walk there if needed (or teleport to
+/// Limsa first when outside the world-travel cities) → buy that world's stop → wait for owned counts to catch up →
+/// pull prices → replan → next stop. A world is never visited twice in one run.
 ///
-/// For now it only buys on the world the player is on: when the next stop is on another world it stops and says so.
+/// Movement is Lifestream's and vnavmesh's job: the runner only calls the plugin's travel/walk helpers and watches.
 /// It never enqueues its own tasks into the plugin's TaskManager (the walk queues more tasks as it runs, so anything
-/// queued after it would run first); it only starts the walk and watches.
+/// queued after it would run first).
 /// </summary>
 public sealed unsafe class RouteRunner : IDisposable
 {
@@ -31,6 +34,7 @@ public sealed unsafe class RouteRunner : IDisposable
         WaitPlan,
         Confirm,
         PickStop,
+        CloseBoard,
         WaitBoard,
         Buy,
         WaitBuy,
@@ -39,6 +43,15 @@ public sealed unsafe class RouteRunner : IDisposable
 
     /// <summary>Territories the marketboard walk starts from (the world-travel hubs).</summary>
     private static readonly HashSet<uint> HubTerritories = [129, 130, 132];
+
+    /// <summary>What the runner set going in the plugin's TaskManager, if anything.</summary>
+    private enum Move
+    {
+        None,
+        Walk,
+        Teleport,
+        Travel,
+    }
 
     private readonly SupermarketSweep _manager;
     private readonly HashSet<string> _visited = [];
@@ -49,7 +62,7 @@ public sealed unsafe class RouteRunner : IDisposable
     private Task<RoutePlan>? _planning;
     private bool _confirmed;
     private WorldStop? _stop;
-    private bool _walkStarted;
+    private Move _move;
     private DateTime? _walkEndedAt;
     private long _spent;
 
@@ -126,9 +139,17 @@ public sealed unsafe class RouteRunner : IDisposable
             _spent += _manager.Buyer.Spent;
         }
 
-        if (_walkStarted && _manager.TaskManager.IsBusy)
-            _manager.TaskManager.Abort();
-        _walkStarted = false;
+        if (_move != Move.None)
+        {
+            if (_manager.TaskManager.IsBusy)
+                _manager.TaskManager.Abort();
+            if (Lifestream_IPCSubscriber.IsEnabled && Lifestream_IPCSubscriber.IsBusy())
+                Lifestream_IPCSubscriber.Abort();
+            if (VNavmesh_IPCSubscriber.IsEnabled && VNavmesh_IPCSubscriber.Path_IsRunning())
+                VNavmesh_IPCSubscriber.Path_Stop();
+        }
+
+        _move = Move.None;
 
         LastResult = wasConfirmed ? $"{reason} Spent {UiHelpers.Gil(_spent)} gil." : reason;
         if (!wasConfirmed)
@@ -175,6 +196,9 @@ public sealed unsafe class RouteRunner : IDisposable
                 break;
             case Phase.PickStop:
                 PickStop(now);
+                break;
+            case Phase.CloseBoard:
+                CloseBoard(now);
                 break;
             case Phase.WaitBoard:
                 WaitBoard(now);
@@ -260,17 +284,17 @@ public sealed unsafe class RouteRunner : IDisposable
         if (_manager.Buyer.IsRunning)
             blockers.Add("The buy assistant is already buying.");
 
+        if (_manager.TaskManager.IsBusy || (Lifestream_IPCSubscriber.IsEnabled && Lifestream_IPCSubscriber.IsBusy()))
+            blockers.Add("Travel or a walk is still in progress.");
+
         var here = Player.Available ? Player.CurrentWorldName : null;
-        if (plan.Stops.FirstOrDefault() is { } first && first.World == here && !UiHelpers.IsMarketboardOpen
-            && config.UseVnavPathing)
-        {
-            if (!VNavmesh_IPCSubscriber.IsEnabled)
-                blockers.Add("vnavmesh isn't loaded, so the walk to the marketboard can't happen. Open the board first.");
-            else if (!HubTerritories.Contains(Svc.ClientState.TerritoryType))
-                blockers.Add("Go to Limsa Lominsa, Ul'dah or Gridania first (or open a marketboard).");
-            if (_manager.TaskManager.IsBusy)
-                blockers.Add("Travel or a walk is still in progress.");
-        }
+        var travels = plan.Stops.Any(s => s.World != here);
+        var firstHere = plan.Stops.FirstOrDefault()?.World == here;
+        var needsHub = firstHere && !UiHelpers.IsMarketboardOpen && !HubTerritories.Contains(Svc.ClientState.TerritoryType);
+        if ((travels || needsHub) && !Lifestream_IPCSubscriber.IsEnabled)
+            blockers.Add("Lifestream isn't loaded: it's needed to travel between worlds" + (needsHub ? " and to get to a city." : "."));
+        if (config.UseVnavPathing && !VNavmesh_IPCSubscriber.IsEnabled && (travels || (firstHere && !UiHelpers.IsMarketboardOpen)))
+            blockers.Add("vnavmesh isn't loaded, so the walk to the marketboard can't happen (or turn off vnavmesh pathing and open boards yourself).");
 
         return blockers;
     }
@@ -287,18 +311,20 @@ public sealed unsafe class RouteRunner : IDisposable
             return;
         }
 
-        var here = Player.Available ? Player.CurrentWorldName : null;
-        if (_stop.World != here)
-        {
-            Stop(_visited.Count == 0
-                ? $"The first stop is {_stop.World}; travelling between worlds isn't part of the runner yet. Travel there, then run again."
-                : $"Done here. Next stop: {_stop.World} (travelling between worlds isn't part of the runner yet).");
-            return;
-        }
-
         var number = plan.Stops.IndexOf(_stop) + 1;
         Status = $"Stop {_visited.Count + 1}: {_stop.World}";
         _log.Add($"{_stop.World}: {_stop.Purchases.Select(p => p.Item).Distinct().Count()} item(s), about {UiHelpers.Gil(_stop.Subtotal)} gil (stop {number} of {plan.Stops.Count} in the plan)");
+
+        var here = Player.Available ? Player.CurrentWorldName : null;
+        _move = Move.None;
+        _walkEndedAt = null;
+        if (_stop.World != here)
+        {
+            // Close the board before travelling (Lifestream closes it too, but don't rely on that).
+            _phase = Phase.CloseBoard;
+            _deadline = now + TimeSpan.FromSeconds(10);
+            return;
+        }
 
         if (UiHelpers.IsMarketboardOpen)
         {
@@ -307,34 +333,106 @@ public sealed unsafe class RouteRunner : IDisposable
         }
 
         var config = SupermarketSweep.Config;
-        _walkStarted = false;
-        _walkEndedAt = null;
-        if (config.UseVnavPathing && VNavmesh_IPCSubscriber.IsEnabled && HubTerritories.Contains(Svc.ClientState.TerritoryType)
-            && !_manager.TaskManager.IsBusy)
+        if (!HubTerritories.Contains(Svc.ClientState.TerritoryType))
+        {
+            // Not in a city with a walkable board: Lifestream takes us to Limsa, then the walk opens the board.
+            if (!_manager.TeleportToLimsaMarketboard())
+            {
+                Stop("Couldn't teleport to Limsa Lominsa (is Lifestream loaded?). Go to a city marketboard and run again.", problem: true);
+                return;
+            }
+
+            _move = Move.Teleport;
+        }
+        else if (config.UseVnavPathing && VNavmesh_IPCSubscriber.IsEnabled)
         {
             _manager.QueueMoveToMarketboardTasks();
-            _walkStarted = true;
+            _move = Move.Walk;
         }
 
         _phase = Phase.WaitBoard;
-        _deadline = now + TimeSpan.FromSeconds(_walkStarted ? 90 : 120);
+        _deadline = now + TimeSpan.FromSeconds(_move == Move.None ? 120 : Math.Max(10, config.LifeStreamTimeout) + 90);
+    }
+
+    private void CloseBoard(DateTime now)
+    {
+        Status = "Closing the marketboard";
+        var listings = MarketboardReader.GetReadyAddon("ItemSearchResult");
+        var search = MarketboardReader.GetReadyAddon("ItemSearch");
+        var listingsOpen = Svc.GameGui.GetAddonByName("ItemSearchResult") != nint.Zero;
+        var searchOpen = Svc.GameGui.GetAddonByName("ItemSearch") != nint.Zero;
+        if (!listingsOpen && !searchOpen && !Svc.Condition[ConditionFlag.OccupiedInEvent])
+        {
+            Travel(now);
+            return;
+        }
+
+        if (now > _deadline)
+        {
+            Stop("Couldn't close the marketboard before travelling.", problem: true);
+            return;
+        }
+
+        // Seen in-game: the listings' X sends [-1]; closing the whole board sends ItemSearch [-1, 0].
+        if (listings != null)
+            Callback.Fire(listings, true, -1);
+        else if (search != null)
+            Callback.Fire(search, true, -1, 0);
+        _notBefore = now + TimeSpan.FromMilliseconds(600);
+    }
+
+    private void Travel(DateTime now)
+    {
+        var world = _stop!.World;
+        if (!Lifestream_IPCSubscriber.IsEnabled)
+        {
+            Stop($"Lifestream isn't loaded, so there's no way to travel to {world}.", problem: true);
+            return;
+        }
+
+        // Lifestream travel, then the walk to the board (queued by the travel itself once it lands).
+        _manager.TravelToWorld(world);
+        _move = Move.Travel;
+        _phase = Phase.WaitBoard;
+        _deadline = now + TimeSpan.FromSeconds(Math.Max(10, SupermarketSweep.Config.LifeStreamTimeout) + 120);
     }
 
     private void WaitBoard(DateTime now)
     {
-        var ready = MarketboardReader.GetReadyAddon("ItemSearch") != null;
-        Status = _walkStarted ? "Walking to the marketboard" : "Open the marketboard to continue";
-        if (ready)
+        var target = _stop!.World;
+        var here = Player.Available ? Player.CurrentWorldName : null;
+        var busy = _manager.TaskManager.IsBusy;
+        Status = _move == Move.Travel && here != target ? $"Travelling to {target}"
+            : _move == Move.Teleport && !HubTerritories.Contains(Svc.ClientState.TerritoryType) ? "Teleporting to Limsa Lominsa"
+            : busy ? "Walking to the marketboard"
+            : "Open the marketboard to continue";
+
+        if (here == target && MarketboardReader.GetReadyAddon("ItemSearch") != null)
         {
-            _walkStarted = false;
+            _move = Move.None;
             _phase = Phase.Buy;
             _notBefore = now + TimeSpan.FromSeconds(1); // let the board finish opening
             return;
         }
 
-        // The walk ends with opening the board; give the window a moment to appear after the queue empties.
-        if (_walkStarted && !_manager.TaskManager.IsBusy)
+        if (_move != Move.None && !busy)
         {
+            // The queue is done (or gave up on a timeout) and the board isn't open yet.
+            if (here != target)
+            {
+                Stop($"Travel to {target} didn't finish (Lifestream timed out or was interrupted).", problem: true);
+                return;
+            }
+
+            if (!SupermarketSweep.Config.UseVnavPathing || !VNavmesh_IPCSubscriber.IsEnabled)
+            {
+                // No walk: the player opens the board.
+                _move = Move.None;
+                _deadline = now + TimeSpan.FromSeconds(120);
+                return;
+            }
+
+            // The walk ends with opening the board; give the window a moment to appear.
             _walkEndedAt ??= now;
             if (now - _walkEndedAt > TimeSpan.FromSeconds(5))
                 Stop("The walk to the marketboard ended without opening it. Open it and run again.", problem: true);

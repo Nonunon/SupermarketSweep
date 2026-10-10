@@ -173,6 +173,28 @@ public class SupermarketSweep : IDalamudPlugin
         TaskManager.Enqueue(QueueMoveToMarketboardTasks);
     }
 
+    /// <summary>
+    /// Teleports to Limsa Lominsa (through Lifestream), then walks to the marketboard: for starting a route run on
+    /// this world from outside the cities with world travel. False if Lifestream isn't there or the aetheryte isn't
+    /// found.
+    /// </summary>
+    public bool TeleportToLimsaMarketboard()
+    {
+        const uint limsaLowerDecks = 129;
+        var aetheryte = Svc.Data.GetExcelSheet<Aetheryte>()
+            .FirstOrDefault(a => a.IsAetheryte && a.Territory.RowId == limsaLowerDecks).RowId;
+        if (!Lifestream_IPCSubscriber.IsEnabled || aetheryte == 0)
+            return false;
+
+        // One attempt only: a task returning false is retried every frame, and a teleport shouldn't be spammed.
+        TaskManager.Enqueue(() => { Lifestream_IPCSubscriber.Teleport(aetheryte, 0); }, LifeStreamTaskConfig);
+        TaskManager.Enqueue(() => Svc.ClientState.TerritoryType == limsaLowerDecks && !Lifestream_IPCSubscriber.IsBusy(),
+            LifeStreamTaskConfig);
+        TaskManager.Enqueue(GenericHelpers.IsScreenReady);
+        TaskManager.Enqueue(QueueMoveToMarketboardTasks);
+        return true;
+    }
+
     public void SaveList()
     {
         var path = Path.Combine(Svc.PluginInterface.ConfigDirectory.FullName, "shoppinglist.json");

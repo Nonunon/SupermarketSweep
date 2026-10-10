@@ -154,6 +154,10 @@ namespace SupermarketSweep.IPC
 
         [EzIPC("Lifestream.AethernetTeleport", applyPrefix: false)]
         internal static readonly Func<string, bool> AethernetTeleport;
+
+        /// <summary>Teleports to an aetheryte (Aetheryte sheet row id).</summary>
+        [EzIPC("Lifestream.Teleport", applyPrefix: false)]
+        internal static readonly Func<uint, byte, bool> Teleport;
         internal static void Dispose()
             => IPCSubscriber_Common.DisposeAll(_disposalTokens);
     }

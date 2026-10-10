@@ -36,9 +36,10 @@ public class RunRoutePanel(SupermarketSweep manager)
                 runner.Begin();
         }
 
-        ImGuiEx.Tooltip(why ?? "Pulls fresh prices, replans, and shows a gil check. After Start it buys this world's stop by itself\n" +
-            (level == BuyAutomation.OpenConfirmation ? "(you press Yes on each purchase), " : "") +
-            "then pulls prices and replans again. Travel between worlds isn't part of it yet.");
+        ImGuiEx.Tooltip(why ?? "Pulls fresh prices, replans, and shows a gil check. After Start it goes through every stop by itself:\n" +
+            "travel (Lifestream), walk to the board, buy" +
+            (level == BuyAutomation.OpenConfirmation ? " (you press Yes on each purchase)" : "") +
+            ", then pull prices and replan before the next world.\nStop with the Stop button or /shop stop.");
 
         if (runner.LastResult is { } result)
         {
