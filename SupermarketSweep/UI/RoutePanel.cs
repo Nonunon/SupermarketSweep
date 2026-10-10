@@ -33,6 +33,7 @@ public class RoutePanel(SupermarketSweep manager)
     public void Draw()
     {
         DrawSettings();
+        TripCostsPanel.Draw(Plan);
         ImGui.Separator();
         ImGui.Spacing();
 
@@ -245,9 +246,6 @@ public class RoutePanel(SupermarketSweep manager)
                                    : $"this saves {trips} trip(s) for free)"));
         }
 
-        if (SupermarketSweep.Config.RouteShowTripCosts)
-            ImGui.TextDisabled($"Debug: trip costs {UiHelpers.Gil(plan.TripCost)}, short units {UiHelpers.Gil(plan.ShortCost)}, " +
-                               $"so {UiHelpers.Gil(plan.Total + plan.TripCost + plan.ShortCost)} as the planner weighs it.");
     }
 
     private static void DrawUnfilled(RoutePlan plan)

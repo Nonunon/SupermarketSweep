@@ -46,8 +46,9 @@ public readonly record struct TripCosts(long PerWorld, long PerDataCenter, doubl
 {
     public bool Enabled => PerWorld > 0 || PerDataCenter > 0;
 
-    public static TripCosts FromConfig(Config config) =>
-        new(Math.Max(0, config.RouteWorldTripCost), Math.Max(0, config.RouteDataCenterTripCost),
+    public static TripCosts FromConfig(Config config) => !config.RouteTripCostsEnabled
+        ? default
+        : new(Math.Max(0, config.RouteWorldTripCost), Math.Max(0, config.RouteDataCenterTripCost),
             Math.Max(0, config.RouteShortUnitFactor));
 }
 
