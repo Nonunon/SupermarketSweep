@@ -123,6 +123,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         _listingsBought = 0;
         LastResult = null;
         IsRunning = true;
+        HoldYesAlready();
         Chat($"Buying {_queue.Count} item(s) on {world}. Stop with the Stop button or /shop stop.");
     }
 
@@ -131,6 +132,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         if (!IsRunning)
             return;
         IsRunning = false;
+        ReleaseYesAlready();
         _queue.Clear();
         _current = null;
         LastResult = $"{reason} Bought {_listingsBought} listing(s) for {UiHelpers.Gil(_spent)} gil.";
@@ -375,6 +377,9 @@ public sealed unsafe class MarketboardBuyer : IDisposable
     private void WaitConfirm(DateTime now)
     {
         var run = _current!;
+        if (ConfirmedElsewhere())
+            return;
+
         var addon = MarketboardReader.GetReadyAddon("SelectYesno");
         if (addon == null)
         {
@@ -386,7 +391,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         _dialogSeenAt ??= now;
         var dialog = new AddonMaster.SelectYesno(addon);
         var text = dialog.Text;
-        if (!ConfirmationMatches(text, run.Item.Name, _pending!))
+        if (!ConfirmationMatches(text, ItemNames(run.Item), _pending!))
         {
             // Its text can take a frame or two to fill in; only call it a mismatch after a moment.
             if (now - _dialogSeenAt < TimeSpan.FromSeconds(1))
@@ -410,10 +415,15 @@ public sealed unsafe class MarketboardBuyer : IDisposable
 
     private void PressYes(DateTime now)
     {
+        if (ConfirmedElsewhere())
+            return;
+
         var addon = MarketboardReader.GetReadyAddon("SelectYesno");
         if (addon == null)
         {
-            Stop("The purchase confirmation closed before Yes.");
+            // Answered by something else in the meantime: the gil decides whether it was a purchase.
+            _step = Step.WaitPurchase;
+            _deadline = now + TimeSpan.FromSeconds(4);
             return;
         }
 
@@ -474,6 +484,85 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         Delay();
     }
 
+    /// <summary>
+    /// True (and moves on to counting the purchase) if the gil already dropped: another plugin answered the purchase
+    /// dialog before we did. YesAlready did this in-game within 5 ms of the dialog opening, before it was even ready.
+    /// </summary>
+    private bool ConfirmedElsewhere()
+    {
+        if (Gil() >= _gilBefore)
+            return false;
+        Svc.Log.Information("The purchase confirmation was answered by something else (YesAlready?); counting the purchase.");
+        _step = Step.WaitPurchase;
+        _deadline = DateTime.Now + TimeSpan.FromSeconds(4);
+        return true;
+    }
+
+    /// <summary>
+    /// YesAlready leaves dialogs alone while its shared "YesAlready.StopRequests" set has any entry (other automation
+    /// plugins use it the same way). We add our name for the length of a run, so the purchase dialog is ours to check
+    /// and answer, and remove it when the run stops or the plugin unloads. Its settings are never touched.
+    /// (Its PausePlugin IPC was tried first: a renewal doesn't extend a running pause, so gaps let it act.)
+    /// </summary>
+    private void HoldYesAlready()
+    {
+        try
+        {
+            _yesAlreadyStops ??= Svc.PluginInterface.GetOrCreateData(YesAlreadyStopRequests, () => new HashSet<string>());
+            _yesAlreadyStops.Add(Svc.PluginInterface.InternalName);
+            YesAlreadyHoldFailed = false;
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning($"Couldn't hold off YesAlready: {ex.Message}");
+            YesAlreadyHoldFailed = true;
+        }
+    }
+
+    private void ReleaseYesAlready()
+    {
+        if (_yesAlreadyStops is null)
+            return;
+        try
+        {
+            _yesAlreadyStops.Remove(Svc.PluginInterface.InternalName);
+            Svc.PluginInterface.RelinquishData(YesAlreadyStopRequests);
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning($"Couldn't release YesAlready: {ex.Message}");
+        }
+
+        _yesAlreadyStops = null;
+    }
+
+    private const string YesAlreadyStopRequests = "YesAlready.StopRequests";
+    private HashSet<string>? _yesAlreadyStops;
+
+    /// <summary>True if the last attempt to hold off YesAlready failed.</summary>
+    public static bool YesAlreadyHoldFailed { get; private set; }
+
+    /// <summary>
+    /// Whether YesAlready is loaded. It can answer purchase dialogs before the checks here run (it did in-game with a
+    /// "Purchase ... gil?" rule). Cached: the plugin list doesn't need checking every frame.
+    /// </summary>
+    public static bool YesAlreadyLoaded
+    {
+        get
+        {
+            if (DateTime.Now - _yesAlreadyCheckedAt > TimeSpan.FromSeconds(5))
+            {
+                _yesAlreadyLoaded = Svc.PluginInterface.InstalledPlugins.Any(p => p.IsLoaded && p.InternalName == "YesAlready");
+                _yesAlreadyCheckedAt = DateTime.Now;
+            }
+
+            return _yesAlreadyLoaded;
+        }
+    }
+
+    private static bool _yesAlreadyLoaded;
+    private static DateTime _yesAlreadyCheckedAt = DateTime.MinValue;
+
     private void NextItem()
     {
         _current = null;
@@ -481,15 +570,24 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         Delay();
     }
 
-    /// <summary>
-    /// The dialog must name the item and show the listing's price: its total or unit price, with or without tax (the
-    /// exact wording hasn't been seen yet). Whitespace is ignored because long names wrap; prices are compared as
-    /// digits only because separators vary by client language. The row was already checked before the click.
-    /// </summary>
-    private static bool ConfirmationMatches(string text, string itemName, LiveListing listing)
+    /// <summary>The item's singular and plural names: the dialog uses the plural for more than one.</summary>
+    private static string[] ItemNames(ShoppingListItem item)
     {
-        static string Squash(string s) => new(s.Where(c => !char.IsWhiteSpace(c) && c != '­').ToArray());
-        if (text.Length == 0 || !Squash(text).Contains(Squash(itemName), StringComparison.OrdinalIgnoreCase))
+        var plural = item.ItemRecord?.Plural.ToString();
+        return string.IsNullOrWhiteSpace(plural) ? [item.Name] : [item.Name, plural];
+    }
+
+    /// <summary>
+    /// The dialog must name the item (singular or plural) and show the listing's price, with or without tax. In-game
+    /// it reads "Purchase 1 aji amarillo for 14 gil?" or "Purchase 20 aji amarillos for 420 gil (20 fee included)?".
+    /// Whitespace is ignored because long names wrap; prices are compared as digits only because separators vary by
+    /// client language. The row was already checked before the click.
+    /// </summary>
+    private static bool ConfirmationMatches(string text, string[] itemNames, LiveListing listing)
+    {
+        static string Squash(string s) => new(s.Where(c => !char.IsWhiteSpace(c) && c != '\u00AD').ToArray());
+        if (text.Length == 0
+            || !itemNames.Any(name => Squash(text).Contains(Squash(name), StringComparison.OrdinalIgnoreCase)))
             return false;
 
         var digits = new string(text.Where(char.IsAsciiDigit).ToArray());
@@ -517,5 +615,6 @@ public sealed unsafe class MarketboardBuyer : IDisposable
     {
         Svc.Framework.Update -= OnUpdate;
         IsRunning = false;
+        ReleaseYesAlready();
     }
 }

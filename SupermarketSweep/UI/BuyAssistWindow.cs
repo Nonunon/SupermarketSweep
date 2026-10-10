@@ -158,6 +158,22 @@ public class BuyAssistWindow : Window
     private void DrawBuyerStatus()
     {
         var buyer = _manager.Buyer;
+        if (SupermarketSweep.Config.BuyAutomation != BuyAutomation.OutlineOnly && MarketboardBuyer.YesAlreadyLoaded)
+        {
+            if (MarketboardBuyer.YesAlreadyHoldFailed)
+            {
+                ImGui.TextColored(ImGuiColors.DalamudOrange, "Couldn't hold off YesAlready; it may answer purchase dialogs first.");
+                ImGuiEx.Tooltip("Its stop-request list may have changed. A YesAlready rule like \"Purchase ... for ... gil?\" confirms purchases before\n" +
+                                "this plugin can check the dialog. Purchases still get counted, but turn that rule off while buying.");
+            }
+            else
+            {
+                ImGui.TextDisabled("YesAlready is held off while a run is going.");
+                ImGuiEx.Tooltip("So the purchase dialog is checked (and, in Open confirmation, left for you) instead of auto-answered.\n" +
+                                "It picks up again as soon as the run ends. Its settings aren't changed.");
+            }
+        }
+
         if (buyer.IsRunning)
         {
             using (ImRaii.PushColor(ImGuiCol.Button, ImGuiColors.DalamudRed with { W = 0.8f }))
