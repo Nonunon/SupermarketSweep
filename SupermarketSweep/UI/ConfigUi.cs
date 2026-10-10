@@ -134,6 +134,14 @@ public class ConfigUi : Window
         if (ImGui.IsItemDeactivatedAfterEdit())
             EzConfig.Save();
         ImGuiEx.Tooltip("Made-up gil per data center other than yours (a lobby trip), on top of the per-world cost.\nAnother data center only makes the route if it's this much better.");
+
+        var factor = config.RouteShortUnitFactor;
+        ImGui.SetNextItemWidth(120 * ImGuiHelpers.GlobalScale);
+        if (ImGui.InputFloat("Short unit weight", ref factor, 0.5f, 1f, "%.1fx"))
+            config.RouteShortUnitFactor = Math.Clamp(factor, 0, 1000);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            EzConfig.Save();
+        ImGuiEx.Tooltip("A trip may be dropped even if that leaves some units short, when they aren't worth it: each unit left\nshort counts as this many times the dearest price the route would have paid for it. Higher = cover more.");
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")

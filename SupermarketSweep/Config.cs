@@ -56,4 +56,6 @@ public class Config
     public int RouteWorldTripCost { get; set; } = 500;
     /// <summary>Made-up gil the planner charges per data center visited other than the current one.</summary>
     public int RouteDataCenterTripCost { get; set; } = 5000;
+    /// <summary>With trip costs: each unit a dropped trip leaves short counts as this many times its dearest planned price.</summary>
+    public float RouteShortUnitFactor { get; set; } = 2;
 }

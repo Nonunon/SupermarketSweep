@@ -240,13 +240,25 @@ public class RoutePanel(SupermarketSweep manager)
         }
 
         if (SupermarketSweep.Config.RouteShowTripCosts)
-            ImGui.TextDisabled($"Debug: trip costs {UiHelpers.Gil(plan.TripCost)}, so {UiHelpers.Gil(plan.Total + plan.TripCost)} as the planner weighs it.");
+            ImGui.TextDisabled($"Debug: trip costs {UiHelpers.Gil(plan.TripCost)}, short units {UiHelpers.Gil(plan.ShortCost)}, " +
+                               $"so {UiHelpers.Gil(plan.Total + plan.TripCost + plan.ShortCost)} as the planner weighs it.");
     }
 
     private static void DrawUnfilled(RoutePlan plan)
     {
         foreach (var (item, missing) in plan.Unfilled)
         {
+            var notWorth = plan.NotWorthTheTrip.FirstOrDefault(n => n.Item == item).Units;
+            if (notWorth > 0)
+            {
+                ImGui.TextColored(ImGuiColors.DalamudYellow, notWorth >= missing
+                    ? $"{item.Name}: {missing} short (only sold on far worlds; not worth the trip)."
+                    : $"{item.Name}: {missing} short ({notWorth} of them only on far worlds; not worth the trip).");
+                ImGuiEx.Tooltip("The rest is listed on worlds the route skips, because going there for this little isn't worth the trip.\n" +
+                                "Buy it on a later run, or pick it up on that world if you're going anyway.");
+                continue;
+            }
+
             ImGui.TextColored(ImGuiColors.DalamudYellow, $"Can't fully cover {item.Name}: {missing} short.");
             ImGuiEx.Tooltip(SupermarketSweep.Config.RouteOverbuyMode switch
             {

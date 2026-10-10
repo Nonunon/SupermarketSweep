@@ -38,11 +38,17 @@ public readonly record struct OverbuyRule(bool Unlimited, float MaxPercent, long
 /// Made-up costs (in gil terms) the planner charges for travelling, so it doesn't add a trip to save a few gil: one
 /// per world other than the current one, and one per data center other than the current one (a lobby trip, much
 /// slower). Only used to choose the route; never part of the gil totals shown.
+///
+/// With either cost set, a trip may also be dropped when that leaves units short, if they aren't worth it: each unit
+/// left short counts as <see cref="ShortFactor"/> times the dearest unit price the cheapest plan paid for that item.
 /// </summary>
-public readonly record struct TripCosts(long PerWorld, long PerDataCenter)
+public readonly record struct TripCosts(long PerWorld, long PerDataCenter, double ShortFactor = 2)
 {
+    public bool Enabled => PerWorld > 0 || PerDataCenter > 0;
+
     public static TripCosts FromConfig(Config config) =>
-        new(Math.Max(0, config.RouteWorldTripCost), Math.Max(0, config.RouteDataCenterTripCost));
+        new(Math.Max(0, config.RouteWorldTripCost), Math.Max(0, config.RouteDataCenterTripCost),
+            Math.Max(0, config.RouteShortUnitFactor));
 }
 
 public class RoutePlan
@@ -58,8 +64,17 @@ public class RoutePlan
     /// <summary>The made-up travel cost the planner charged this route (<see cref="TripCosts"/>), for debugging.</summary>
     public long TripCost { get; init; }
 
+    /// <summary>What the units left short to save trips "cost" the planner (<see cref="TripCosts.ShortFactor"/>), for debugging.</summary>
+    public long ShortCost { get; init; }
+
     /// <summary>Items the route can't fully cover (not enough listings, or exact amounts impossible without overbuying).</summary>
     public List<(ShoppingListItem Item, long Missing)> Unfilled { get; init; } = [];
+
+    /// <summary>
+    /// Units the cheapest plan could cover but this route leaves short because the trip wasn't worth them (part of
+    /// <see cref="Unfilled"/>).
+    /// </summary>
+    public List<(ShoppingListItem Item, long Units)> NotWorthTheTrip { get; init; } = [];
 
     /// <summary>Items that still need buying but have no price data (or data for other settings).</summary>
     public List<ShoppingListItem> NeedsPrices { get; init; } = [];
@@ -71,10 +86,11 @@ public class RoutePlan
 /// Plans which worlds to visit to buy everything still needed.
 ///
 /// 1. Find the cheapest way to buy each item using every world (greedy by price per unit, whole stacks only).
-/// 2. Then repeatedly try dropping one world: re-plan without it, and keep the drop if every item is still
-///    covered as well as before and either the total stays within <c>maxExtraPercent</c> of the cheapest total, or
-///    the total plus the made-up <see cref="TripCosts"/> goes down (a trip that saves less than it "costs" isn't
-///    worth it, so the route sticks to the current data center unless another one is well worth the hop).
+/// 2. Then repeatedly try dropping one world: re-plan without it, and keep the drop if either every item is still
+///    covered as well as before and the total stays within <c>maxExtraPercent</c> of the cheapest total, or the
+///    total plus the made-up <see cref="TripCosts"/> (trips, and units left short) goes down: a trip that saves
+///    less than it "costs" isn't worth it, so the route sticks to the current data center unless another one is
+///    well worth the hop. Without trip costs no drop may leave anything short.
 ///    Of the valid drops each round, the one leaving the fewest worlds wins, then the lowest total plus trip costs.
 ///    Stops when nothing can be dropped.
 ///
@@ -82,8 +98,8 @@ public class RoutePlan
 /// cheapest such stack may finish the item. Without any allowance an item can end up partly covered.
 ///
 /// HQ follows each item's <see cref="ShoppingListItem.EffectiveQuality"/>: listings are split into tiers (HQ, then NQ
-/// for Prefer HQ; HQ alone for HQ only; one mixed tier for Any) and filled tier by tier. Dropping a world must not
-/// lower how much HQ an item gets, so "fewer trips" never quietly swaps HQ for NQ.
+/// for Prefer HQ; HQ alone for HQ only; one mixed tier for Any) and filled tier by tier. Dropping a world may only
+/// lower how much HQ an item gets by units it drops altogether, so "fewer trips" never quietly swaps HQ for NQ.
 /// </summary>
 public static class RoutePlanner
 {
@@ -134,20 +150,29 @@ public static class RoutePlanner
 
         long TripCost(Fill fill)
         {
-            if (trips == default)
+            if (!trips.Enabled)
                 return 0;
             var worlds = fill.Worlds.Where(w => w != currentWorld?.World).ToList();
             var otherDcs = worlds.Select(DataCenter).Where(dc => dc != currentWorld?.DataCenter).Distinct().Count();
             return worlds.Count * trips.PerWorld + otherDcs * trips.PerDataCenter;
         }
 
-        long Effective(Fill fill) => fill.Total + TripCost(fill);
+        // Units below what the cheapest plan covers, valued at the dearest unit price it paid for the item, times the
+        // factor: what leaving them short "costs" when weighing a trip.
+        var shortValue = needs.ToDictionary(n => n.Item, n =>
+            cheapest.Bought.TryGetValue(n.Item, out var listings) && listings.Count > 0
+                ? listings.Max(l => (double)l.Cost / l.Quantity) * trips.ShortFactor
+                : 0);
+        long Lost(Fill fill, Need n) => Math.Max(0, cheapest.Covered(n) - fill.Covered(n));
+        long ShortCost(Fill fill) => trips.Enabled ? (long)Math.Round(needs.Sum(n => Lost(fill, n) * shortValue[n.Item])) : 0;
+
+        long Effective(Fill fill) => fill.Total + TripCost(fill) + ShortCost(fill);
         bool Better(Fill a, Fill b) =>
             a.Worlds.Count < b.Worlds.Count || (a.Worlds.Count == b.Worlds.Count && Effective(a) < Effective(b));
 
         // Ban one used world per round; its purchases can move to ANY world still allowed, including ones the
-        // cheapest plan never touched. Keep the ban if it doesn't add worlds, covers as much, and fits the budget.
-        // The allowed set only shrinks, so this always ends.
+        // cheapest plan never touched. Keep the ban if it doesn't add worlds and either covers as much and fits the
+        // budget, or (with trip costs) weighs less. The allowed set only shrinks, so this always ends.
         var allowedWorlds = needs.SelectMany(n => n.AllListings).Select(l => l.WorldName).ToHashSet();
         var current = cheapest;
         var bestSeen = cheapest;
@@ -158,10 +183,12 @@ public static class RoutePlanner
             {
                 var allowed = allowedWorlds.Where(w => w != world).ToHashSet();
                 var trial = FillAll(needs, allowed, overbuy);
-                if ((trial.Total > budget && Effective(trial) >= Effective(current))
-                    || trial.Worlds.Count > current.Worlds.Count
-                    || needs.Any(n => trial.Covered(n) < cheapest.Covered(n)
-                                      || trial.HqCovered(n) < cheapest.HqCovered(n)))
+                var losesUnits = needs.Any(n => Lost(trial, n) > 0);
+                if (trial.Worlds.Count > current.Worlds.Count
+                    || (losesUnits && !trips.Enabled)
+                    // HQ may only go with units dropped altogether, never be swapped for NQ.
+                    || needs.Any(n => cheapest.HqCovered(n) - trial.HqCovered(n) > Lost(trial, n))
+                    || !((trial.Total <= budget && !losesUnits) || Effective(trial) < Effective(current)))
                     continue;
                 if (best is null || Better(trial, best.Value.Fill))
                     best = (trial, world);
@@ -183,6 +210,8 @@ public static class RoutePlanner
             CheapestTotal = cheapest.Total,
             CheapestWorldCount = cheapest.Worlds.Count,
             TripCost = TripCost(current),
+            ShortCost = ShortCost(current),
+            NotWorthTheTrip = needs.Where(n => Lost(current, n) > 0).Select(n => (n.Item, Lost(current, n))).ToList(),
             Unfilled = needs.Where(n => current.Covered(n) < n.Quantity)
                 .Select(n => (n.Item, n.Quantity - current.Covered(n)))
                 .ToList(),
