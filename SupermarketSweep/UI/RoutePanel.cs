@@ -229,8 +229,13 @@ public class RoutePanel(SupermarketSweep manager)
         if (plan.Stops.Count < plan.CheapestWorldCount)
         {
             ImGui.SameLine();
-            ImGui.TextDisabled($"(cheapest: {UiHelpers.Gil(plan.CheapestTotal)} gil over {plan.CheapestWorldCount} worlds, " +
-                               $"so +{UiHelpers.Gil(plan.Total - plan.CheapestTotal)} gil saves {plan.CheapestWorldCount - plan.Stops.Count} trip(s))");
+            // The world-trimming can find a cheaper mix than the greedy "cheapest" fill, so the difference can go either way.
+            var trips = plan.CheapestWorldCount - plan.Stops.Count;
+            var difference = plan.Total - plan.CheapestTotal;
+            ImGui.TextDisabled($"(cheapest: {UiHelpers.Gil(plan.CheapestTotal)} gil over {plan.CheapestWorldCount} worlds, so " +
+                               (difference > 0 ? $"+{UiHelpers.Gil(difference)} gil saves {trips} trip(s))"
+                                   : difference < 0 ? $"this saves {trips} trip(s) and {UiHelpers.Gil(-difference)} gil)"
+                                   : $"this saves {trips} trip(s) for free)"));
         }
     }
 
