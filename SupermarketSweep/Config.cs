@@ -18,9 +18,9 @@ public class Config
     // Route planner
     /// <summary>Accept up to this much extra total cost (percent) to skip visiting another world.</summary>
     public float RouteMaxExtraPercent { get; set; } = 5;
-    /// <summary>Allow buying a stack of any size bigger than what's still needed when that's the cheaper way to finish.</summary>
-    public bool RouteAllowOverbuy { get; set; } = false;
-    /// <summary>Without <see cref="RouteAllowOverbuy"/>: a finishing stack may go this many percent past the need...</summary>
+    /// <summary>Whether a stack bigger than what's still needed may be bought (see <see cref="OverbuyMode"/>).</summary>
+    public OverbuyMode RouteOverbuyMode { get; set; } = OverbuyMode.Limited;
+    /// <summary>With <see cref="OverbuyMode.Limited"/>: a finishing stack may go this many percent past the need...</summary>
     public float RouteOverbuyMaxPercent { get; set; } = 5;
     /// <summary>...or this many units past it, whichever allows more.</summary>
     public int RouteOverbuyMaxUnits { get; set; } = 10;

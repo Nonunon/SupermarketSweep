@@ -21,8 +21,12 @@ public class WorldStop(string world, string dataCenter)
 /// </summary>
 public readonly record struct OverbuyRule(bool Unlimited, float MaxPercent, long MaxUnits)
 {
-    public static OverbuyRule FromConfig(Config config) =>
-        new(config.RouteAllowOverbuy, config.RouteOverbuyMaxPercent, config.RouteOverbuyMaxUnits);
+    public static OverbuyRule FromConfig(Config config) => config.RouteOverbuyMode switch
+    {
+        OverbuyMode.Off => new(false, 0, 0),
+        OverbuyMode.Unlimited => new(true, 0, 0),
+        _ => new(false, config.RouteOverbuyMaxPercent, config.RouteOverbuyMaxUnits),
+    };
 
     /// <summary>The most units past <paramref name="need"/> this rule accepts.</summary>
     public long MaxExcess(long need) => Unlimited

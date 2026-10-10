@@ -76,16 +76,6 @@ public class RoutePanel(SupermarketSweep manager)
         ImGuiEx.Tooltip("Pay up to this much more in total to visit fewer worlds.\n0% = always the cheapest route, however many worlds that takes.");
 
         ImGui.SameLine();
-        var overbuy = config.RouteAllowOverbuy;
-        if (ImGui.Checkbox("Allow overbuying", ref overbuy))
-        {
-            config.RouteAllowOverbuy = overbuy;
-            EzConfig.Save();
-        }
-
-        ImGuiEx.Tooltip("Allow buying a stack of any size bigger than you need (say 99 when you need 3) when that's cheaper.\nOff: only stacks within the overbuy allowance below.");
-
-        ImGui.SameLine();
         var oceania = config.RouteIncludeOceania;
         using (ImRaii.Disabled(config.ShoppingRegion != RegionType.NorthAmerica))
         {
@@ -114,13 +104,32 @@ public class RoutePanel(SupermarketSweep manager)
     private static void DrawOverbuyAllowance()
     {
         var config = SupermarketSweep.Config;
-        using var disabled = ImRaii.Disabled(config.RouteAllowOverbuy);
-        const string tooltip = "Lets the last stack of an item go a little past what you need, so 897/900 can finish with a\n" +
-                               "small stack instead of stopping short. Allowed if the extra is within either limit.\n" +
-                               "0% and 0 units = only stacks that fit. Not used while \"Allow overbuying\" is on (no limit then).";
+        var mode = config.RouteOverbuyMode;
+        ImGui.SetNextItemWidth(95 * ImGuiHelpers.GlobalScale);
+        using (var combo = ImRaii.Combo("Overbuy", mode.ToFriendlyString()))
+        {
+            if (combo)
+            {
+                foreach (var option in Enum.GetValues<OverbuyMode>())
+                {
+                    if (ImGui.Selectable(option.ToFriendlyString(), option == mode) && option != mode)
+                    {
+                        config.RouteOverbuyMode = option;
+                        EzConfig.Save();
+                    }
 
-        ImGui.AlignTextToFramePadding();
-        ImGui.Text("Overbuy up to");
+                    ImGuiEx.Tooltip(option.Description());
+                }
+            }
+        }
+
+        ImGuiEx.Tooltip(mode.Description());
+        if (config.RouteOverbuyMode != OverbuyMode.Limited)
+            return;
+
+        var tooltip = OverbuyMode.Limited.Description();
+        ImGui.SameLine();
+        ImGui.Text("up to");
         ImGuiEx.Tooltip(tooltip);
 
         ImGui.SameLine();
@@ -227,12 +236,15 @@ public class RoutePanel(SupermarketSweep manager)
         foreach (var (item, missing) in plan.Unfilled)
         {
             ImGui.TextColored(ImGuiColors.DalamudYellow, $"Can't fully cover {item.Name}: {missing} short.");
-            ImGuiEx.Tooltip(SupermarketSweep.Config.RouteAllowOverbuy
-                ? item.EffectiveQuality == QualityPreference.HqOnly
+            ImGuiEx.Tooltip(SupermarketSweep.Config.RouteOverbuyMode switch
+            {
+                OverbuyMode.Unlimited => item.EffectiveQuality == QualityPreference.HqOnly
                     ? "Not enough HQ listings in the region (this item is set to HQ only)."
-                    : "Not enough listings in the region."
-                : "Not enough listings, or only stacks bigger than what's left by more than the overbuy allowance.\n" +
-                  "Raise the allowance or allow overbuying to use those.");
+                    : "Not enough listings in the region.",
+                OverbuyMode.Limited => "Not enough listings, or only stacks bigger than what's left by more than the overbuy limit.\n" +
+                                       "Raise the limit or set Overbuy to Unlimited to use those.",
+                _ => "Not enough listings, or only stacks bigger than what's left. Set Overbuy to Limited or Unlimited to use those.",
+            });
         }
     }
 
