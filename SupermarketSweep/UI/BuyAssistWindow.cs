@@ -180,7 +180,7 @@ public class BuyAssistWindow : Window
             using (ImRaii.PushColor(ImGuiCol.Button, ImGuiColors.DalamudRed with { W = 0.8f }))
             {
                 if (ImGui.Button("Stop"))
-                    buyer.Stop("Stopped.", problem: false);
+                    buyer.Stop("Stopped.", BuyOutcome.Stopped);
             }
 
             ImGui.SameLine();

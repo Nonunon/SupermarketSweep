@@ -79,7 +79,7 @@ public class ConfigUi : Window
             }
         }
 
-        ImGuiEx.Tooltip(config.BuyAutomation.Description() + "\nEvery buy is checked: the row on screen, the confirmation's item and price, your gil and the limit below.");
+        ImGuiEx.Tooltip(config.BuyAutomation.Description() + "\nEvery buy is checked: the row on screen, the confirmation's item and price, your gil and the reserve below.");
 
         using var disabled = ImRaii.Disabled(config.BuyAutomation == BuyAutomation.OutlineOnly);
         var delay = config.AutoBuyStepDelayMs;
@@ -90,13 +90,13 @@ public class ConfigUi : Window
             EzConfig.Save();
         ImGuiEx.Tooltip("Pause between automated clicks, give or take 30%.");
 
-        var limit = config.AutoBuyMaxGilPerRun;
+        var reserve = config.AutoBuyGilReserve;
         ImGui.SetNextItemWidth(160 * ImGuiHelpers.GlobalScale);
-        if (ImGui.InputInt("Max gil per run", ref limit, 100_000, 1_000_000))
-            config.AutoBuyMaxGilPerRun = Math.Max(0, limit);
+        if (ImGui.InputInt("Keep at least (gil)", ref reserve, 100_000, 1_000_000))
+            config.AutoBuyGilReserve = Math.Clamp(reserve, 0, 999_999_999);
         if (ImGui.IsItemDeactivatedAfterEdit())
             EzConfig.Save();
-        ImGuiEx.Tooltip("An automated run stops before it would spend more than this in total.");
+        ImGuiEx.Tooltip("Gil reserve: automated buying stops before a purchase would leave you with less than this.\n0 = spend everything if needed.");
     }
 
     private void DrawBoolConfig(string label, ref bool value, Action<bool> setter, string tooltip = "")

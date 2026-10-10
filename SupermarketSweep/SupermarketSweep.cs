@@ -93,7 +93,7 @@ public class SupermarketSweep : IDalamudPlugin
         if (args.Trim().Equals("stop", StringComparison.OrdinalIgnoreCase))
         {
             if (Buyer.IsRunning)
-                Buyer.Stop("Stopped with /shop stop.", problem: false);
+                Buyer.Stop("Stopped with /shop stop.", BuyOutcome.Stopped);
             else
                 Svc.Chat.Print("[Supermarket Sweep] Not buying anything right now.");
             return;

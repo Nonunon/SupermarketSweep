@@ -20,7 +20,8 @@ namespace SupermarketSweep;
 ///
 /// Safety: targets and price caps are frozen when a run starts and progress is counted from gil actually spent (owned
 /// counts from Allagan Tools lag, so trusting them mid-run would buy twice). Anything unexpected (a mismatch, a
-/// timeout, the board closing, not enough gil, the per-run gil limit) stops the run. Stop() and /shop stop end it.
+/// timeout, the board closing) stops the run, and so does reaching the gil reserve (<see cref="Config.AutoBuyGilReserve"/>).
+/// Stop() and /shop stop end it. <see cref="LastOutcome"/> says how a run ended, for the route runner.
 /// </summary>
 public sealed unsafe class MarketboardBuyer : IDisposable
 {
@@ -82,21 +83,28 @@ public sealed unsafe class MarketboardBuyer : IDisposable
 
     public bool IsRunning { get; private set; }
 
+    /// <summary>How the last run ended (null while running or before the first run).</summary>
+    public BuyOutcome? LastOutcome { get; private set; }
+
+    /// <summary>Gil spent so far in the current run (or the last one, once it ended).</summary>
+    public long Spent => _spent;
+
     /// <summary>What the current run is doing, for the assistant window.</summary>
     public string Status { get; private set; } = string.Empty;
 
-    /// <summary>How the last run ended (null while running or before the first run).</summary>
+    /// <summary>How the last run ended, as a message (null while running or before the first run).</summary>
     public string? LastResult { get; private set; }
 
     /// <summary>
     /// Starts buying, on this world, what the route plans here for each item (capped by what's still needed).
-    /// Call from the framework thread: it reads owned counts.
+    /// Call from the framework thread: it reads owned counts. Returns whether a run started (false when one is already
+    /// running, automation is off, or there's nothing to buy here: then <see cref="LastOutcome"/> is NothingToBuy).
     /// </summary>
-    public void Start(IEnumerable<ShoppingListItem> items, RoutePlan? plan, string? world)
+    public bool Start(IEnumerable<ShoppingListItem> items, RoutePlan? plan, string? world)
     {
         var config = SupermarketSweep.Config;
         if (IsRunning || config.BuyAutomation == BuyAutomation.OutlineOnly)
-            return;
+            return false;
 
         _queue.Clear();
         foreach (var item in items)
@@ -112,7 +120,8 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         if (_queue.Count == 0)
         {
             LastResult = "Nothing to buy here.";
-            return;
+            LastOutcome = BuyOutcome.NothingToBuy;
+            return false;
         }
 
         _playerConfirms = config.BuyAutomation == BuyAutomation.OpenConfirmation;
@@ -122,12 +131,14 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         _spent = 0;
         _listingsBought = 0;
         LastResult = null;
+        LastOutcome = null;
         IsRunning = true;
         HoldYesAlready();
         Chat($"Buying {_queue.Count} item(s) on {world}. Stop with the Stop button or /shop stop.");
+        return true;
     }
 
-    public void Stop(string reason, bool problem = true)
+    public void Stop(string reason, BuyOutcome outcome = BuyOutcome.Problem)
     {
         if (!IsRunning)
             return;
@@ -136,7 +147,8 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         _queue.Clear();
         _current = null;
         LastResult = $"{reason} Bought {_listingsBought} listing(s) for {UiHelpers.Gil(_spent)} gil.";
-        if (problem)
+        LastOutcome = outcome;
+        if (outcome == BuyOutcome.Problem)
             Svc.Chat.PrintError($"[Supermarket Sweep] {LastResult}");
         else
             Chat(LastResult);
@@ -202,7 +214,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
         {
             if (!_queue.TryDequeue(out var next))
             {
-                Stop("Done.", problem: false);
+                Stop("Done.", BuyOutcome.Done);
                 return;
             }
 
@@ -337,15 +349,12 @@ public sealed unsafe class MarketboardBuyer : IDisposable
 
         var listing = read.Listings[index];
         var gil = Gil();
-        if (listing.Cost > gil)
+        var reserve = Math.Max(0, config.AutoBuyGilReserve);
+        if (gil - listing.Cost < reserve)
         {
-            Stop($"Not enough gil for {listing.Quantity} {run.Item.Name} ({UiHelpers.Gil(listing.Cost)}).");
-            return;
-        }
-
-        if (_spent + listing.Cost > config.AutoBuyMaxGilPerRun)
-        {
-            Stop($"The next buy would pass the {UiHelpers.Gil(config.AutoBuyMaxGilPerRun)} gil per-run limit (setting).");
+            Stop(reserve > 0
+                ? $"Reached the gil reserve: {listing.Quantity} {run.Item.Name} ({UiHelpers.Gil(listing.Cost)} gil) would leave less than {UiHelpers.Gil(reserve)}."
+                : $"Not enough gil for {listing.Quantity} {run.Item.Name} ({UiHelpers.Gil(listing.Cost)}).", BuyOutcome.OutOfGil);
             return;
         }
 
@@ -471,7 +480,7 @@ public sealed unsafe class MarketboardBuyer : IDisposable
 
         if (_playerConfirms)
         {
-            Stop("Not bought (No was pressed, or it didn't go through).", problem: false);
+            Stop("Not bought (No was pressed, or it didn't go through).", BuyOutcome.Stopped);
             return;
         }
 
